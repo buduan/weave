@@ -14,6 +14,7 @@ import { AuthorizationModule } from './authorization/authorization.module';
 import { DatasetsModule } from './datasets/datasets.module';
 import { FormsModule } from './forms/forms.module';
 import { FormSubmissionsModule } from './form-submissions/form-submissions.module';
+import { MailModule } from './mail/mail.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
@@ -34,6 +35,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     WorkspacesModule,
     AuthModule,
     AuthorizationModule,
+    MailModule,
     DatasetsModule,
     SpecialDatasetsModule,
     FormsModule,

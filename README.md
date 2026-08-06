@@ -204,6 +204,7 @@ pnpm start
 | `/workspaces/:workspaceId/datasets` | Dataset 列表、创建、详情、元数据与归档 |
 | `/workspaces/:workspaceId/datasets/:datasetId/fields/*` | 字段定义和关联目标选项 |
 | `/workspaces/:workspaceId/datasets/:datasetId/rows/*` | 绝对窗口查询、行创建、局部更新和软删除 |
+| `/mail/*` | Power Automate 邮件 webhook 配置与测试（系统管理员） |
 
 运行中的 Swagger 文档由 NestJS 根据当前 Controller 生成。`app/backend/api/openapi.yml` 是仓库中的静态契约文件，包含 Dataset HTTP 边界；Form 领域目前仍没有 HTTP Controller。
 
@@ -220,9 +221,9 @@ pnpm start
 
 ## 通知服务限制
 
-`NotificationsService` 当前的邮件和短信方法是刻意保留的 no-op mock。认证层会生成并安全存储验证码，但不会发送真实邮件或短信，也不会把验证码写入日志。
+`NotificationsService` 的邮件通道已接入 Power Automate webhook：系统管理员在 `/settings` 页面配置触发器为「当收到 HTTP 请求时」的 Power Automate 流 URL，URL 以纯字符串形式存放在 Redis key `settings:email:power-automate:webhook-url`。配置后，邮箱验证码等通知会以 `POST { email, subject, content }` 发送到该 URL；发送失败被静默吞掉，验证码绝不写入日志。短信方法仍是 no-op mock。
 
-在接入真实邮件/SMS 提供商并完成部署验证前，不应在生产环境启用邮箱验证码登录、密码找回、邮箱 MFA、SMS MFA 或手机号绑定。TOTP 和 Passkey 不依赖这两个 mock 方法。
+在配置好 Power Automate webhook 前，邮件不会真正投递；在接入真实 SMS 提供商前，不应在生产环境启用 SMS MFA 或手机号绑定。TOTP 和 Passkey 不依赖这两个通道。
 
 ## 测试、检查与构建
 
