@@ -17,7 +17,12 @@ export class UsersController {
 
   @Get('me')
   public me(@CurrentActor() actor: AuthenticatedActor) {
-    return this.users.findOwnProfile(actor.userId);
+    return this.users.findSafeById(actor.userId);
+  }
+
+  @Get('permission')
+  public permission(@CurrentActor() actor: AuthenticatedActor): AuthenticatedActor {
+    return actor;
   }
 
   @Patch('me')

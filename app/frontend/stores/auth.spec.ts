@@ -90,6 +90,28 @@ describe('auth Pinia Token state', () => {
     expect(cookies.get('orz_refresh_token')?.value).toBe(firstTokens.refreshToken);
   });
 
+  it('writes isSystemAdmin from /user/permission (actor), including the superadmin case', async () => {
+    const store = createStore();
+    store.setTokens(firstTokens);
+
+    const actorBase = {
+      userId: profile.id,
+      workspaceId: 1,
+      sessionId: 'session-1',
+      permissions: [],
+      isWorkspaceAdmin: false,
+    };
+
+    api.get.mockResolvedValueOnce({ ...actorBase, isSystemAdmin: true });
+    await store.fetchActor();
+    expect(store.actor?.isSystemAdmin).toBe(true);
+    expect(store.isSystemAdmin).toBe(true);
+
+    api.get.mockResolvedValueOnce({ ...actorBase, isSystemAdmin: false });
+    await store.fetchActor();
+    expect(store.isSystemAdmin).toBe(false);
+  });
+
   it('atomically replaces the Token pair on Refresh', async () => {
     const store = createStore();
     store.setTokens(firstTokens);

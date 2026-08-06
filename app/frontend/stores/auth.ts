@@ -30,7 +30,7 @@ export const useAuthStore = defineStore('auth', () => {
   const actor = shallowRef<AuthenticatedActor | null>(null);
 
   const isAuthenticated = computed(() => Boolean(accessToken.value));
-  const isSystemAdmin = computed(() => profile.value?.isSystemAdmin ?? false);
+  const isSystemAdmin = computed(() => actor.value?.isSystemAdmin ?? false);
   const isWorkspaceAdmin = computed(() => actor.value?.isWorkspaceAdmin ?? false);
 
   function hasPermission(key: string): boolean {
@@ -84,10 +84,16 @@ export const useAuthStore = defineStore('auth', () => {
     setProfile(user);
   }
 
+  async function fetchActor(): Promise<void> {
+    const { $api } = useNuxtApp();
+    const actorData = await $api.get<AuthenticatedActor>('/user/permission');
+    setActor(actorData);
+  }
+
   async function completeAuthentication(tokens: AuthTokens): Promise<void> {
     setTokens(tokens);
     try {
-      await fetchProfile();
+      await Promise.all([fetchProfile(), fetchActor()]);
     } catch (error: unknown) {
       // The API client clears a definitively invalid Session on 401. Transient
       // profile failures retain the valid Tokens so the caller can retry.
@@ -144,6 +150,7 @@ export const useAuthStore = defineStore('auth', () => {
     completeAuthentication,
     refreshTokens,
     fetchProfile,
+    fetchActor,
     logout,
   };
 });

@@ -196,7 +196,7 @@ pnpm start
 | --- | --- |
 | `/health` | 公开健康检查 |
 | `/auth/*` | 注册、登录、刷新、登出、密码、MFA、Passkey、手机号和会话 |
-| `/user/*` | 当前用户资料、用户列表、用户状态和强制登出 |
+| `/user/*` | 当前用户资料、`/user/permission`（有效权限与管理员标记）、用户列表、用户状态和强制登出 |
 | `/workspaces/*` | 默认 Workspace、成员和成员类型 |
 | `/workspaces/:workspaceId/roles` | 角色、角色权限、成员角色和直接权限 |
 | `/system-administrators` | 系统管理员授予、撤销和查询 |
