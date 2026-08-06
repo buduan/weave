@@ -4,6 +4,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { MemberStatus, Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembersSyncService } from '../datasets/members-sync.service';
 import { ensureWorkspaceMemberSampleData } from './workspace-member-sample-data';
@@ -18,6 +19,7 @@ export class WorkspacesService {
     private readonly prisma: PrismaService,
     config: ConfigService,
     private readonly membersSync: MembersSyncService,
+    private readonly audit: AuditService,
   ) {
     const configuredId = Number(config.get('DEFAULT_WORKSPACE_ID') ?? WorkspacesService.DEFAULT_ID);
     if (configuredId !== WorkspacesService.DEFAULT_ID) {
@@ -96,27 +98,25 @@ export class WorkspacesService {
       if (data.memberTypeId !== undefined || data.status !== undefined) {
         await this.membersSync.synchronize(tx, workspaceId, memberId, actorUserId);
       }
-      await tx.auditLog.create({
-        data: {
-          action: 'workspace.member.update',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member',
-          resourceId: memberId,
-          result: 'success',
-          workspaceId,
-          metadata: {
-            ...data,
-            ...(sampleData ? {
-              sampleData: {
-                created: sampleData.created,
-                datasetId: sampleData.datasetId,
-                formId: sampleData.formId,
-              },
-            } : {}),
-          } as Prisma.InputJsonObject,
-        },
-      });
+      await this.audit.record({
+        action: 'workspace.member.update',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member',
+        resourceId: memberId,
+        result: 'success',
+        workspaceId,
+        metadata: {
+          ...data,
+          ...(sampleData ? {
+            sampleData: {
+              created: sampleData.created,
+              datasetId: sampleData.datasetId,
+              formId: sampleData.formId,
+            },
+          } : {}),
+        } as Prisma.InputJsonObject,
+      }, tx);
       return updated;
     });
   }
@@ -138,18 +138,16 @@ export class WorkspacesService {
     this.assertCustomSlug(data.slug);
     return this.prisma.$transaction(async (tx) => {
       const memberType = await tx.workspaceMemberType.create({ data: { workspaceId, ...data } });
-      await tx.auditLog.create({
-        data: {
-          action: 'workspace.member_type.create',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member_type',
-          resourceId: memberType.id,
-          result: 'success',
-          workspaceId,
-          metadata: data,
-        },
-      });
+      await this.audit.record({
+        action: 'workspace.member_type.create',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member_type',
+        resourceId: memberType.id,
+        result: 'success',
+        workspaceId,
+        metadata: data,
+      }, tx);
       return memberType;
     });
   }
@@ -168,18 +166,16 @@ export class WorkspacesService {
     if (!memberType.isSystem && data.slug) this.assertCustomSlug(data.slug);
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.workspaceMemberType.update({ where: { id: memberTypeId }, data });
-      await tx.auditLog.create({
-        data: {
-          action: 'workspace.member_type.update',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member_type',
-          resourceId: memberTypeId,
-          result: 'success',
-          workspaceId,
-          metadata: data,
-        },
-      });
+      await this.audit.record({
+        action: 'workspace.member_type.update',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member_type',
+        resourceId: memberTypeId,
+        result: 'success',
+        workspaceId,
+        metadata: data,
+      }, tx);
       return updated;
     });
   }
@@ -194,20 +190,18 @@ export class WorkspacesService {
     if (memberType.isSystem) throw new ConflictException('System member types cannot be deleted');
     const assignedCount = await this.prisma.workspaceMember.count({ where: { memberTypeId } });
     if (assignedCount > 0) throw new ConflictException('Assigned member type cannot be deleted');
-    await this.prisma.$transaction([
-      this.prisma.workspaceMemberType.delete({ where: { id: memberTypeId } }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'workspace.member_type.delete',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member_type',
-          resourceId: memberTypeId,
-          result: 'success',
-          workspaceId,
-        },
-      }),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.workspaceMemberType.delete({ where: { id: memberTypeId } });
+      await this.audit.record({
+        action: 'workspace.member_type.delete',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member_type',
+        resourceId: memberTypeId,
+        result: 'success',
+        workspaceId,
+      }, tx);
+    });
   }
 
   private assertCustomSlug(slug: string): void {

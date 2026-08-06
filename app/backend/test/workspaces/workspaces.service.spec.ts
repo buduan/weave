@@ -17,6 +17,7 @@ describe('first-release Workspace boundary', () => {
       {} as never,
       { get: () => '1' } as never,
       {} as never,
+      {} as never,
     );
 
     expect(() => service.assertDefault(1)).not.toThrow();
@@ -34,6 +35,7 @@ describe('Workspace member types', () => {
     const service = new WorkspacesService(
       prisma as never,
       { get: () => '1' } as never,
+      {} as never,
       {} as never,
     );
 
@@ -53,6 +55,7 @@ describe('Workspace member types', () => {
     const service = new WorkspacesService(
       prisma as never,
       { get: () => '1' } as never,
+      {} as never,
       {} as never,
     );
 

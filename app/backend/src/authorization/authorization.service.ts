@@ -10,6 +10,7 @@ import {
   type PermissionKey,
 } from '@weave/types';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReauthenticationService } from '../auth/reauthentication.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -22,6 +23,7 @@ export class AuthorizationService {
     private readonly prisma: PrismaService,
     private readonly reauthentication: ReauthenticationService,
     private readonly workspaces: WorkspacesService,
+    private readonly audit: AuditService,
   ) {}
 
   public async resolveActor(
@@ -125,29 +127,27 @@ export class AuthorizationService {
     if (workspaceId !== undefined && member.workspaceId !== workspaceId) {
       throw new NotFoundException('Member not found');
     }
-    await this.prisma.$transaction([
-      this.prisma.memberPermission.deleteMany({ where: { memberId } }),
-      this.prisma.memberPermission.createMany({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.memberPermission.deleteMany({ where: { memberId } });
+      await tx.memberPermission.createMany({
         data: grants.map((grant) => ({
           memberId,
           permissionKey: grant.permissionKey,
           effect: grant.effect as PermissionEffect,
           grantedByUserId: actorUserId,
         })),
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'member.permissions.replace',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member',
-          resourceId: memberId,
-          result: 'success',
-          workspaceId: member.workspaceId,
-          metadata: grants as unknown as Prisma.InputJsonValue,
-        },
-      }),
-    ]);
+      });
+      await this.audit.record({
+        action: 'member.permissions.replace',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member',
+        resourceId: memberId,
+        result: 'success',
+        workspaceId: member.workspaceId,
+        metadata: grants as unknown as Prisma.InputJsonValue,
+      }, tx);
+    });
   }
 
   public listRoles(workspaceId: number) {
@@ -163,17 +163,15 @@ export class AuthorizationService {
     this.workspaces.assertDefault(workspaceId);
     return this.prisma.$transaction(async (tx) => {
       const role = await tx.role.create({ data: { workspaceId, ...data } });
-      await tx.auditLog.create({
-        data: {
-          action: 'role.create',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'role',
-          resourceId: role.id,
-          result: 'success',
-          workspaceId,
-        },
-      });
+      await this.audit.record({
+        action: 'role.create',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'role',
+        resourceId: role.id,
+        result: 'success',
+        workspaceId,
+      }, tx);
       return role;
     });
   }
@@ -189,17 +187,15 @@ export class AuthorizationService {
     if (!role || role.workspaceId !== workspaceId) throw new NotFoundException('Role not found');
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.role.update({ where: { id: roleId }, data });
-      await tx.auditLog.create({
-        data: {
-          action: 'role.update',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'role',
-          resourceId: roleId,
-          result: 'success',
-          workspaceId,
-        },
-      });
+      await this.audit.record({
+        action: 'role.update',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'role',
+        resourceId: roleId,
+        result: 'success',
+        workspaceId,
+      }, tx);
       return updated;
     });
   }
@@ -214,24 +210,22 @@ export class AuthorizationService {
     const permissionKeysToStore = this.assertGrantKeys(keys);
     const role = await this.prisma.role.findUnique({ where: { id: roleId } });
     if (!role || role.workspaceId !== workspaceId) throw new NotFoundException('Role not found');
-    await this.prisma.$transaction([
-      this.prisma.rolePermission.deleteMany({ where: { roleId } }),
-      this.prisma.rolePermission.createMany({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rolePermission.deleteMany({ where: { roleId } });
+      await tx.rolePermission.createMany({
         data: permissionKeysToStore.map((permissionKey) => ({ roleId, permissionKey })),
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'role.permissions.replace',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'role',
-          resourceId: roleId,
-          result: 'success',
-          workspaceId,
-          metadata: { permissionKeys: permissionKeysToStore },
-        },
-      }),
-    ]);
+      });
+      await this.audit.record({
+        action: 'role.permissions.replace',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'role',
+        resourceId: roleId,
+        result: 'success',
+        workspaceId,
+        metadata: { permissionKeys: permissionKeysToStore },
+      }, tx);
+    });
   }
 
   public async deleteRole(
@@ -248,20 +242,18 @@ export class AuthorizationService {
     if (role.isSystem || memberCount > 0) {
       throw new ConflictException('Assigned or system role cannot be deleted');
     }
-    await this.prisma.$transaction([
-      this.prisma.role.delete({ where: { id: roleId } }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'role.delete',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'role',
-          resourceId: roleId,
-          result: 'success',
-          workspaceId,
-        },
-      }),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.role.delete({ where: { id: roleId } });
+      await this.audit.record({
+        action: 'role.delete',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'role',
+        resourceId: roleId,
+        result: 'success',
+        workspaceId,
+      }, tx);
+    });
   }
 
   public async replaceMemberRoles(
@@ -278,28 +270,26 @@ export class AuthorizationService {
     if (!member || member.workspaceId !== workspaceId || roles.length !== new Set(roleIds).size) {
       throw new BadRequestException('Member and roles must belong to the same Workspace');
     }
-    await this.prisma.$transaction([
-      this.prisma.memberRole.deleteMany({ where: { memberId } }),
-      this.prisma.memberRole.createMany({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.memberRole.deleteMany({ where: { memberId } });
+      await tx.memberRole.createMany({
         data: [...new Set(roleIds)].map((roleId) => ({
           memberId,
           roleId,
           assignedByUserId: actorUserId,
         })),
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'member.roles.replace',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member',
-          resourceId: memberId,
-          result: 'success',
-          workspaceId,
-          metadata: { roleIds: [...new Set(roleIds)] },
-        },
-      }),
-    ]);
+      });
+      await this.audit.record({
+        action: 'member.roles.replace',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member',
+        resourceId: memberId,
+        result: 'success',
+        workspaceId,
+        metadata: { roleIds: [...new Set(roleIds)] },
+      }, tx);
+    });
   }
 
   public listSystemAdministrators() {
@@ -344,17 +334,15 @@ export class AuthorizationService {
         where: { id: memberId },
         data: { isWorkspaceAdmin: enabled },
       });
-      await tx.auditLog.create({
-        data: {
-          action: `workspace_administrator.${enabled ? 'grant' : 'revoke'}`,
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'workspace_member',
-          resourceId: memberId,
-          result: 'success',
-          workspaceId,
-        },
-      });
+      await this.audit.record({
+        action: `workspace_administrator.${enabled ? 'grant' : 'revoke'}`,
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'workspace_member',
+        resourceId: memberId,
+        result: 'success',
+        workspaceId,
+      }, tx);
     });
   }
 
@@ -368,23 +356,21 @@ export class AuthorizationService {
     if (!user || user.status !== 'active') {
       throw new BadRequestException('Only active users can become system administrators');
     }
-    await this.prisma.$transaction([
-      this.prisma.systemAdministrator.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAdministrator.upsert({
         where: { userId },
         create: { userId, grantedByUserId: actorUserId },
         update: {},
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          action: 'system_administrator.grant',
-          actorType: 'user',
-          actorUserId,
-          resourceType: 'user',
-          resourceId: userId,
-          result: 'success',
-        },
-      }),
-    ]);
+      });
+      await this.audit.record({
+        action: 'system_administrator.grant',
+        actorType: 'user',
+        actorUserId,
+        resourceType: 'user',
+        resourceId: userId,
+        result: 'success',
+      }, tx);
+    });
   }
 
   public async revokeSystemAdministrator(
@@ -410,31 +396,27 @@ export class AuthorizationService {
             throw new ConflictException('The last system administrator cannot be revoked');
           }
           await tx.systemAdministrator.delete({ where: { userId } });
-          await tx.auditLog.create({
-            data: {
-              action: 'system_administrator.revoke',
-              actorType: 'user',
-              actorUserId,
-              resourceType: 'user',
-              resourceId: userId,
-              result: 'success',
-            },
-          });
+          await this.audit.record({
+            action: 'system_administrator.revoke',
+            actorType: 'user',
+            actorUserId,
+            resourceType: 'user',
+            resourceId: userId,
+            result: 'success',
+          }, tx);
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
         return;
       } catch (error: unknown) {
         if (error instanceof ConflictException) {
           // A denied concurrent mutation is audited after its transaction rolls back.
           // eslint-disable-next-line no-await-in-loop
-          await this.prisma.auditLog.create({
-            data: {
-              action: 'system_administrator.revoke',
-              actorType: 'user',
-              actorUserId,
-              resourceType: 'user',
-              resourceId: userId,
-              result: 'denied',
-            },
+          await this.audit.record({
+            action: 'system_administrator.revoke',
+            actorType: 'user',
+            actorUserId,
+            resourceType: 'user',
+            resourceId: userId,
+            result: 'denied',
           });
           throw error;
         }

@@ -9,6 +9,7 @@ import {
 import type { JsonValue } from '@weave/types';
 import { checksumJson } from '@weave/utils';
 
+import { AuditService } from '../../src/audit/audit.service';
 import { UsersService } from '../../src/users/users.service';
 import {
   ensureWorkspaceMemberSampleData,
@@ -240,6 +241,7 @@ function createLifecycleService(
     prisma as never,
     { get: () => '1' } as never,
     { synchronize: vi.fn().mockResolvedValue(undefined) } as never,
+    new AuditService(prisma as never),
   );
   return {
     service,

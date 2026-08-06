@@ -10,6 +10,7 @@ import {
   workspacePermissionKeys,
 } from '@weave/types';
 
+import { AuditService } from '../../src/audit/audit.service';
 import { AuthorizationService } from '../../src/authorization/authorization.service';
 import { resolveEffectivePermissions } from '../../src/authorization/effective-permissions';
 
@@ -79,6 +80,7 @@ describe('administrator boundaries', () => {
       prisma as never,
       reauthentication as never,
       workspaces as never,
+      new AuditService(prisma as never),
     );
 
     const results = await Promise.allSettled([
@@ -93,7 +95,7 @@ describe('administrator boundaries', () => {
   });
 
   it('rejects reserved administrator labels in ordinary grants', () => {
-    const service = new AuthorizationService({} as never, {} as never, {} as never);
+    const service = new AuthorizationService({} as never, {} as never, {} as never, {} as never);
     expect(() => service.assertGrantKeys(['system_admin'])).toThrow();
     expect(() => service.assertGrantKeys(['workspace_admin'])).toThrow();
     expect(() => service.assertGrantKeys(['not.registered'])).toThrow();
