@@ -15,7 +15,6 @@ import type { ApiResponseNoStatusOptions } from '@nestjs/swagger';
 import { apiStatuses, type AuthenticatedActor } from '@weave/types';
 
 import { CurrentActor, Public } from '../authorization/authorization.decorators';
-import { AuditService } from '../audit/audit.service';
 import {
   CodeLoginDto,
   EmailDto,
@@ -101,7 +100,6 @@ export class AuthController {
     private readonly mfa: MfaService,
     private readonly passkeys: PasskeyService,
     private readonly reauthentication: ReauthenticationService,
-    private readonly audit: AuditService,
   ) {}
 
   @Post('login/options')
@@ -233,30 +231,14 @@ export class AuthController {
   @Post('logout')
   @ApiBearerAuth()
   public async logout(@CurrentActor() actor: AuthenticatedActor) {
-    await this.sessions.revoke(actor.sessionId, actor.userId);
-    await this.audit.record({
-      action: 'session.revoke',
-      actorType: 'user',
-      actorUserId: actor.userId,
-      resourceType: 'session',
-      resourceId: actor.sessionId,
-      result: 'success',
-    });
+    await this.sessions.logout(actor.sessionId, actor.userId);
     return { accepted: true };
   }
 
   @Post('logout-all')
   @ApiBearerAuth()
   public async logoutAll(@CurrentActor() actor: AuthenticatedActor) {
-    await this.sessions.revokeAll(actor.userId);
-    await this.audit.record({
-      action: 'session.revoke_all',
-      actorType: 'user',
-      actorUserId: actor.userId,
-      resourceType: 'user',
-      resourceId: actor.userId,
-      result: 'success',
-    });
+    await this.sessions.logoutAll(actor.userId);
     return { accepted: true };
   }
 

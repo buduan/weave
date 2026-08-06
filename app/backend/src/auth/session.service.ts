@@ -6,6 +6,7 @@ import { UserStatus } from '@prisma/client';
 
 import type { AuthTokens } from '@weave/types';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { AuthSettingsService } from './auth-settings.service';
@@ -26,6 +27,7 @@ export class SessionService {
     private readonly jwt: JwtService,
     private readonly settings: AuthSettingsService,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   public async create(
@@ -111,6 +113,32 @@ export class SessionService {
     sessionIds.forEach((sessionId) => transaction.del(this.sessionKey(sessionId)));
     transaction.del(key);
     await transaction.exec();
+  }
+
+  /** 用户主动登出：吊销会话并审计。内部的 security revoke（refresh 轮换失败等）仍走 revoke，不审计。 */
+  public async logout(sessionId: string, userId: string): Promise<void> {
+    await this.revoke(sessionId, userId);
+    await this.audit.record({
+      action: 'session.revoke',
+      actorType: 'user',
+      actorUserId: userId,
+      resourceType: 'session',
+      resourceId: sessionId,
+      result: 'success',
+    });
+  }
+
+  /** 用户主动登出所有会话：吊销并审计。 */
+  public async logoutAll(userId: string): Promise<void> {
+    await this.revokeAll(userId);
+    await this.audit.record({
+      action: 'session.revoke_all',
+      actorType: 'user',
+      actorUserId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+      result: 'success',
+    });
   }
 
   public async list(userId: string): Promise<Array<{

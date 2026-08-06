@@ -94,6 +94,7 @@ describe('Refresh Session rotation', () => {
         refreshTtlSeconds: 3600,
       } as never,
       prisma as never,
+      { record: vi.fn() } as never,
     );
 
     const first = await service.create('user-1', 1, 'test device');

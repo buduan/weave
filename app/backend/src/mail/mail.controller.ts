@@ -5,7 +5,6 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import type { AuthenticatedActor, MailPublicConfig } from '@orz-people-platform/types';
 
-import { AuditService } from '../audit/audit.service';
 import { CurrentActor, RequirePermissions } from '../authorization/authorization.decorators';
 import { MailService } from './mail.service';
 import { UpdateMailConfigDto } from './mail.dto';
@@ -14,10 +13,7 @@ import { UpdateMailConfigDto } from './mail.dto';
 @ApiTags('Mail')
 @ApiBearerAuth()
 export class MailController {
-  public constructor(
-    private readonly mail: MailService,
-    private readonly audit: AuditService,
-  ) { }
+  public constructor(private readonly mail: MailService) {}
 
   @Get('config')
   @RequirePermissions('system_admin')
@@ -31,15 +27,7 @@ export class MailController {
     @Body() dto: UpdateMailConfigDto,
       @CurrentActor() actor: AuthenticatedActor,
   ): Promise<MailPublicConfig> {
-    await this.mail.setWebhookUrl(dto.url);
-    await this.audit.record({
-      action: 'mail.config.update',
-      actorType: 'user',
-      actorUserId: actor.userId,
-      resourceType: 'mail_config',
-      resourceId: 'power_automate',
-      result: 'success',
-    });
+    await this.mail.updateConfig(dto.url, actor.userId);
     return this.mail.getPublicConfig();
   }
 }

@@ -4,6 +4,7 @@ import { Injectable } from '@nestjs/common';
 
 import type { MailPublicConfig } from '@orz-people-platform/types';
 
+import { AuditService } from '../audit/audit.service';
 import { RedisService } from '../redis/redis.service';
 
 /**
@@ -20,7 +21,10 @@ const WEBHOOK_URL_KEY = 'settings:email:power-automate:webhook-url';
 
 @Injectable()
 export class MailService {
-  public constructor(private readonly redis: RedisService) {}
+  public constructor(
+    private readonly redis: RedisService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** 读取当前配置的 webhook URL，未配置时返回 null。 */
   public async getWebhookUrl(): Promise<string | null> {
@@ -36,6 +40,19 @@ export class MailService {
     } else {
       await this.redis.del(WEBHOOK_URL_KEY);
     }
+  }
+
+  /** 更新 webhook 配置并审计（空字符串清空配置）。 */
+  public async updateConfig(url: string, actorUserId: string): Promise<void> {
+    await this.setWebhookUrl(url);
+    await this.audit.record({
+      action: 'mail.config.update',
+      actorType: 'user',
+      actorUserId,
+      resourceType: 'mail_config',
+      resourceId: 'power_automate',
+      result: 'success',
+    });
   }
 
   /** 返回给前端的公共配置，永不暴露密钥。 */
