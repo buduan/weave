@@ -30,7 +30,7 @@ export const useAuthStore = defineStore('auth', () => {
   const actor = shallowRef<AuthenticatedActor | null>(null);
 
   const isAuthenticated = computed(() => Boolean(accessToken.value));
-  const isSystemAdmin = computed(() => actor.value?.isSystemAdmin ?? false);
+  const isSystemAdmin = computed(() => profile.value?.isSystemAdmin ?? false);
   const isWorkspaceAdmin = computed(() => actor.value?.isWorkspaceAdmin ?? false);
 
   function hasPermission(key: string): boolean {

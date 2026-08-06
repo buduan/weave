@@ -11,7 +11,7 @@ export class NotificationsService {
    *
    * 发送失败被刻意吞掉：验证码生成与存储必须独立于邮件投递成功，
    * 邮件通道故障不应让认证流程返回 5xx。错误不写入日志，避免泄露验证码或 PII；
-   * 管理员可通过 `/mail/test` 诊断通道。
+   * 邮件是否送达取决于 Redis 中配置的 webhook URL。
    */
   public async sendEmailVerificationCode(email: string, code: string): Promise<void> {
     if (!this.mail) return;

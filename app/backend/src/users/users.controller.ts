@@ -17,7 +17,7 @@ export class UsersController {
 
   @Get('me')
   public me(@CurrentActor() actor: AuthenticatedActor) {
-    return this.users.findSafeById(actor.userId);
+    return this.users.findOwnProfile(actor.userId);
   }
 
   @Patch('me')

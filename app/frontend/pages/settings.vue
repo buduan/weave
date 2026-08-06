@@ -3,7 +3,6 @@ import type { MailPublicConfig } from '@orz-people-platform/types';
 import {
   definePageMeta, onMounted, shallowRef, useNuxtApp,
 } from '#imports';
-import { useAuthStore } from '~/stores/auth';
 import { ApiError } from '~/utils/api';
 
 definePageMeta({
@@ -13,7 +12,6 @@ definePageMeta({
 });
 
 const { $api } = useNuxtApp();
-const authStore = useAuthStore();
 
 const accessDenied = shallowRef(false);
 const configured = shallowRef(false);
@@ -22,11 +20,6 @@ const loading = shallowRef(true);
 const saving = shallowRef(false);
 const saveMessage = shallowRef('');
 const saveError = shallowRef('');
-
-const testRecipient = shallowRef(authStore.profile?.email ?? '');
-const sending = shallowRef(false);
-const testMessage = shallowRef('');
-const testError = shallowRef('');
 
 onMounted(async () => {
   try {
@@ -58,22 +51,6 @@ async function save(): Promise<void> {
     saveError.value = error instanceof Error ? error.message : '保存失败';
   } finally {
     saving.value = false;
-  }
-}
-
-async function sendTest(): Promise<void> {
-  sending.value = true;
-  testMessage.value = '';
-  testError.value = '';
-  try {
-    const result = await $api.post<{ messageId: string }>('/mail/test', {
-      to: testRecipient.value.trim(),
-    });
-    testMessage.value = `测试邮件已发送（messageId: ${result.messageId}）。`;
-  } catch (error: unknown) {
-    testError.value = error instanceof Error ? error.message : '发送失败';
-  } finally {
-    sending.value = false;
   }
 }
 </script>
@@ -203,70 +180,6 @@ async function sendTest(): Promise<void> {
             <code class="font-mono text-toned">{ email, subject, content }</code>。
             验证码等通知会通过此 URL 以 JSON POST 发出。
           </p>
-        </form>
-      </UCard>
-
-      <UCard
-        class="rounded-3xl border-default bg-default shadow-sm"
-        :ui="{ body: 'space-y-5' }"
-      >
-        <template #header>
-          <div>
-            <p class="text-sm font-bold text-highlighted">
-              发送测试邮件
-            </p>
-            <p class="mt-1 text-xs text-muted">
-              使用当前配置向指定地址发送一封测试邮件，验证通道是否可用
-            </p>
-          </div>
-        </template>
-
-        <form
-          class="space-y-5"
-          @submit.prevent="sendTest"
-        >
-          <UFormField
-            label="收件人邮箱"
-            name="test-recipient"
-            :error="testError || undefined"
-          >
-            <UInput
-              v-model="testRecipient"
-              type="email"
-              placeholder="you@example.com"
-              autocomplete="email"
-              size="xl"
-              class="w-full"
-            />
-          </UFormField>
-
-          <div class="flex flex-wrap items-center gap-3">
-            <UButton
-              type="submit"
-              label="发送测试邮件"
-              icon="i-solar-letter-bold-duotone"
-              color="neutral"
-              variant="outline"
-              :loading="sending"
-              :disabled="!configured"
-            />
-            <span
-              v-if="testMessage"
-              class="inline-flex items-center gap-1.5 text-sm text-primary"
-            >
-              <UIcon
-                name="i-solar-check-circle-bold-duotone"
-                class="size-4"
-              />
-              {{ testMessage }}
-            </span>
-            <span
-              v-if="!configured"
-              class="text-xs text-muted"
-            >
-              请先保存一个有效的 Webhook URL
-            </span>
-          </div>
         </form>
       </UCard>
     </template>

@@ -41,6 +41,19 @@ export class UsersService {
     return this.toProfile(user);
   }
 
+  /** 当前用户自己的 profile，附带 isSystemAdmin（仅 /user/me 使用，不外发他人）。 */
+  public async findOwnProfile(id: string): Promise<UserProfile> {
+    const [user, systemAdmin] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id }, select: safeUserSelect }),
+      this.prisma.systemAdministrator.findUnique({
+        where: { userId: id },
+        select: { userId: true },
+      }),
+    ]);
+    if (!user) throw new NotFoundException('User not found');
+    return { ...this.toProfile(user), isSystemAdmin: Boolean(systemAdmin) };
+  }
+
   public async list(): Promise<UserProfile[]> {
     const users = await this.prisma.user.findMany({
       select: safeUserSelect,

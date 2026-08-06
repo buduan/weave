@@ -204,7 +204,7 @@ pnpm start
 | `/workspaces/:workspaceId/datasets` | Dataset 列表、创建、详情、元数据与归档 |
 | `/workspaces/:workspaceId/datasets/:datasetId/fields/*` | 字段定义和关联目标选项 |
 | `/workspaces/:workspaceId/datasets/:datasetId/rows/*` | 绝对窗口查询、行创建、局部更新和软删除 |
-| `/mail/*` | Power Automate 邮件 webhook 配置与测试（系统管理员） |
+| `/mail/*` | Power Automate 邮件 webhook 配置（系统管理员，发送本身不暴露路由） |
 
 运行中的 Swagger 文档由 NestJS 根据当前 Controller 生成。`app/backend/api/openapi.yml` 是仓库中的静态契约文件，包含 Dataset HTTP 边界；Form 领域目前仍没有 HTTP Controller。
 

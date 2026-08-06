@@ -16,51 +16,57 @@ const workspaces: Pick<WorkspaceSummary, 'id' | 'name' | 'slug'>[] = [{
   slug: 'default',
 }];
 
-const navigation: NavigationMenuItem[] = [
-  {
-    label: 'Workspace',
-    type: 'label',
-  },
-  {
-    label: 'Overview',
-    icon: 'i-solar-widget-5-bold-duotone',
-    to: '/dashboard',
-  },
-  {
-    label: 'People',
-    icon: 'i-solar-users-group-rounded-bold-duotone',
-    to: '/people',
-  },
-  {
-    label: 'Organization',
-    icon: 'i-solar-buildings-2-bold-duotone',
-    to: '/organization',
-  },
-  {
-    label: '数据表',
-    icon: 'i-solar-database-bold-duotone',
-    to: '/panel/dataset',
-  },
-  {
-    label: 'Forms',
-    icon: 'i-solar-notes-bold-duotone',
-    to: '/panel/form',
-  },
-  {
-    label: 'Administration',
-    type: 'label',
-  },
-  {
-    label: 'Roles & access',
-    icon: 'i-solar-shield-user-bold-duotone',
-    to: '/access',
-  },
-  {
-    label: 'Settings',
-    icon: 'i-solar-settings-minimalistic-bold-duotone',
-    to: '/settings',
-  },
-];
+const navigation = computed<NavigationMenuItem[]>(() => {
+  const items: NavigationMenuItem[] = [
+    {
+      label: 'Workspace',
+      type: 'label',
+    },
+    {
+      label: 'Overview',
+      icon: 'i-solar-widget-5-bold-duotone',
+      to: '/dashboard',
+    },
+    {
+      label: 'People',
+      icon: 'i-solar-users-group-rounded-bold-duotone',
+      to: '/people',
+    },
+    {
+      label: 'Organization',
+      icon: 'i-solar-buildings-2-bold-duotone',
+      to: '/organization',
+    },
+    {
+      label: '数据表',
+      icon: 'i-solar-database-bold-duotone',
+      to: '/panel/dataset',
+    },
+    {
+      label: 'Forms',
+      icon: 'i-solar-notes-bold-duotone',
+      to: '/panel/form',
+    },
+    {
+      label: 'Administration',
+      type: 'label',
+    },
+    {
+      label: 'Roles & access',
+      icon: 'i-solar-shield-user-bold-duotone',
+      to: '/access',
+    },
+  ];
+  // Settings 是站点级配置，仅对系统管理员展示。
+  if (authStore.isSystemAdmin) {
+    items.push({
+      label: 'Settings',
+      icon: 'i-solar-settings-minimalistic-bold-duotone',
+      to: '/settings',
+    });
+  }
+  return items;
+});
 
 const userRole = computed(() => {
   if (authStore.isSystemAdmin) return 'System administrator';

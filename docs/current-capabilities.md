@@ -15,7 +15,7 @@
 - Form 编辑器所需 Dataset API：按现有可见性列出/读取 Dataset，并复用领域服务创建字段。
 - Form 公开填写 API：按全局 `Form.id` 读取最小 published 定义和安全 relation 选项，支持匿名/
   登录可选认证、主体行预填、隐藏字段拒绝、Redis 限频、幂等提交和最小成功响应。
-- 邮件：Power Automate webhook 通道，系统管理员可配置 URL（存于 Redis key `settings:email:power-automate:webhook-url`），用于发送邮箱验证码等通知；`/mail/config` 与 `/mail/test` 受 `system_admin` 权限保护。
+- 邮件：Power Automate webhook 通道，系统管理员可配置 URL（存于 Redis key `settings:email:power-automate:webhook-url`），用于发送邮箱验证码等通知；`GET/PUT /mail/config` 受 `system_admin` 保护，邮件发送本身不对外暴露 HTTP 路由。
 
 ## 已实现的 Dataset HTTP 能力
 
@@ -48,4 +48,4 @@
 - `/form/:id` 公开填写页：SSR-safe published 加载、多语言、开放/关闭/登录/主体行状态、现有
   `FormRenderer` 填写态、动态 relation 选项、Ajv 即时错误、幂等提交和本地化成功文案。
 
-`/dashboard` 当前是布局调试页。`/people`、`/organization`、`/access` 目前只是导航目标，尚未提供对应页面。`/settings` 已提供 Power Automate 邮件 webhook 配置与测试（仅系统管理员）。
+`/dashboard` 当前是布局调试页。`/people`、`/organization`、`/access` 目前只是导航目标，尚未提供对应页面。`/settings` 已提供 Power Automate 邮件 webhook 配置（仅系统管理员可见）。

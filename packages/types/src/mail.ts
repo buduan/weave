@@ -3,7 +3,8 @@
  *
  * Webhook URL 以纯字符串形式存放在 Redis
  * （key `settings:email:power-automate:webhook-url`），由系统管理员在 `/settings`
- * 页面维护。鉴权 token 不纳入本版本。
+ * 页面维护。鉴权 token 不纳入本版本。邮件发送本身不对外暴露 HTTP 路由，仅供
+ * 内部通知服务（如验证码）调用。
  */
 
 /** 写入 Power Automate webhook 配置的请求体。`url` 为空表示清空（停用邮件发送）。 */
@@ -15,14 +16,4 @@ export interface MailConfigInput {
 export interface MailPublicConfig {
   configured: boolean;
   url: string;
-}
-
-/** 发送测试邮件的请求体。 */
-export interface MailTestInput {
-  to: string;
-}
-
-/** 发送测试邮件成功后的返回体。 */
-export interface MailTestResult {
-  messageId: string;
 }

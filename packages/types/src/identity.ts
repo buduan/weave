@@ -24,6 +24,7 @@ export interface UserProfile {
   emailVerifiedAt: string | null;
   phoneVerifiedAt: string | null;
   status: UserStatus;
+  isSystemAdmin?: boolean;
   createdAt: string;
   updatedAt: string;
 }
