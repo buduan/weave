@@ -157,7 +157,7 @@ pnpm bootstrap:admin --non-interactive
 pnpm start
 ```
 
-后端容器启动时会先执行 `prisma migrate deploy`，然后启动 NestJS；前端容器运行 Nuxt 生产构建。外部端口由 `FRONTEND_PORT` 和 `BACKEND_PORT` 控制，默认分别为 `6771` 和 `6770`。
+后端容器启动时会依次执行 `prisma migrate deploy`、`bootstrap:admin --non-interactive`，然后启动 NestJS；前端容器运行 Nuxt 生产构建。首次初始化空数据库时，必须通过部署平台的密钥注入全部 `BOOTSTRAP_ADMIN_*` 变量，以创建 Admin 账户。已有系统管理员时该步骤不会读取这些变量或修改现有账户，因此后续部署可以移除这些一次性密钥。外部端口由 `FRONTEND_PORT` 和 `BACKEND_PORT` 控制，默认分别为 `6771` 和 `6770`。
 
 生产环境必须在启动前设置随机的 `JWT_SECRET`、`AUTH_HMAC_SECRET` 和 `TOTP_ENCRYPTION_KEY`，显式设置认证 TTL，并为 `WEBAUTHN_ORIGINS` 使用 HTTPS。后端在 `NODE_ENV=production` 下会拒绝开发回退密钥、隐式 TTL 和非 HTTPS WebAuthn origin。
 
@@ -174,6 +174,7 @@ pnpm start
 | 安全密钥 | `AUTH_HMAC_SECRET`、`TOTP_ENCRYPTION_KEY` | OTP/限流摘要和 TOTP 密钥加密 |
 | WebAuthn | `WEBAUTHN_RP_ID`、`WEBAUTHN_RP_NAME`、`WEBAUTHN_ORIGINS` | Passkey RP 和允许的 origin |
 | Workspace | `DEFAULT_WORKSPACE_ID` | 当前版本固定为 `1` |
+| 首次初始化 | `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_NAME`、`BOOTSTRAP_ADMIN_NICKNAME`、`BOOTSTRAP_ADMIN_PASSWORD` | 仅在空数据库首次启动时创建 Admin；密码必须由密钥管理服务注入 |
 | 部署 origin | `APP_ORIGIN`、`API_ORIGIN`、`PASSKEY_ORIGIN`、`PASSKEY_RP_ID` | CORS、Swagger server 和生产访问地址 |
 
 ## HTTP API

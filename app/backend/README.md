@@ -62,9 +62,10 @@ BOOTSTRAP_ADMIN_PASSWORD='use-a-strong-secret' \
 pnpm bootstrap:admin --non-interactive
 ```
 
-Run the command only against an uninitialized database. A repeated run reports that initialization
-already exists and does not overwrite credentials, ownership, or grants. Conflicting partial data
-causes the transaction to fail for manual review.
+The production container runs the same non-interactive bootstrap after migration. On the first
+deployment, inject all `BOOTSTRAP_ADMIN_*` values through the deployment secret store. Once a
+system administrator exists, the command exits without reading those values or changing
+credentials, ownership, or grants; conflicting partial data still fails for manual review.
 
 ## Authentication configuration
 

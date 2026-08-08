@@ -29,4 +29,4 @@ COPY --from=builder /workspace/app/backend/prisma ./prisma
 
 EXPOSE 6770
 
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma && node dist/main.js"]
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma && node dist/bootstrap-admin.js --non-interactive && exec node dist/main.js"]

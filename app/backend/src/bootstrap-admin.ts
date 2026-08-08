@@ -107,16 +107,15 @@ async function main(): Promise<void> {
   if (!process.argv.includes('--non-interactive') && (!stdin.isTTY || !stdout.isTTY)) {
     throw new Error('Use --non-interactive with BOOTSTRAP_ADMIN_* environment variables outside an interactive terminal.');
   }
-  const input = process.argv.includes('--non-interactive')
-    ? nonInteractiveInput(process.env)
-    : await interactiveInput();
-
   const prisma = new PrismaClient();
   try {
     if (await prisma.systemAdministrator.count() > 0) {
       stdout.write('System administrator already initialized; no changes made.\n');
       return;
     }
+    const input = process.argv.includes('--non-interactive')
+      ? nonInteractiveInput(process.env)
+      : await interactiveInput();
     const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
