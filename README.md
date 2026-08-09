@@ -157,7 +157,7 @@ pnpm bootstrap:admin --non-interactive
 pnpm start
 ```
 
-后端容器启动时会先执行 `prisma migrate deploy`，然后启动 NestJS；前端容器运行 Nuxt 生产构建。外部端口由 `FRONTEND_PORT` 和 `BACKEND_PORT` 控制，默认分别为 `6771` 和 `6770`。
+后端容器启动时会先执行 `prisma migrate deploy`。若设置了任一 `BOOTSTRAP_ADMIN_*` 变量，容器会运行现有管理员初始化脚本；该脚本仅会在没有系统管理员时创建首个管理员、默认 Workspace 和审计记录。必须同时设置五个 `BOOTSTRAP_ADMIN_*` 变量，部分设置会使启动失败；全部省略则跳过初始化。最后容器启动 NestJS；前端容器运行 Nuxt 生产构建。外部端口由 `FRONTEND_PORT` 和 `BACKEND_PORT` 控制，默认分别为 `6771` 和 `6770`。
 
 生产环境必须在启动前设置随机的 `JWT_SECRET`、`AUTH_HMAC_SECRET` 和 `TOTP_ENCRYPTION_KEY`，显式设置认证 TTL，并为 `WEBAUTHN_ORIGINS` 使用 HTTPS。后端在 `NODE_ENV=production` 下会拒绝开发回退密钥、隐式 TTL 和非 HTTPS WebAuthn origin。
 
