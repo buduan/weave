@@ -12,7 +12,14 @@ import type {
   DatasetWindowQueryScope,
   JsonValue,
 } from '@weave/types';
+import { cloneJson } from './json-clone';
+import {
+  isCompleteChoicePath,
+  normalizeDatasetChoiceConfig,
+  resolveDatasetChoicePathLabels,
+} from './dataset-choices';
 import { canonicalizeJson } from './json';
+import { isEmptyJsonValue } from './json-guards';
 
 export interface DatasetFilterOperatorOption {
   label: string;
@@ -62,7 +69,7 @@ export const EMPTY_DATASET_QUERY: DatasetTableQuery = {
 };
 
 export function cloneDatasetQuery(query: DatasetTableQuery): DatasetTableQuery {
-  return structuredClone(query);
+  return cloneJson(query);
 }
 
 export function canonicalizeDatasetQuery(query: DatasetTableQuery): string {
@@ -139,18 +146,13 @@ export function getDatasetFieldOptions(
   relationOptions: Record<string, DatasetOption[]> = {},
 ): DatasetOption[] {
   if (field.kind === 'relation') return relationOptions[field.id] ?? [];
-  const rawOptions = field.config.options;
-  if (!Array.isArray(rawOptions)) return [];
-  return rawOptions.flatMap((option): DatasetOption[] => {
-    if (typeof option === 'string') return [{ label: option, value: option }];
-    if (typeof option === 'object' && option !== null && !Array.isArray(option)) {
-      const { value, label } = option;
-      if (typeof value === 'string') {
-        return [{ label: typeof label === 'string' ? label : value, value }];
-      }
-    }
+  if (field.kind !== 'single_select' && field.kind !== 'multi_select') return [];
+  try {
+    const choiceConfig = normalizeDatasetChoiceConfig(field.kind, field.config);
+    return choiceConfig.options.map(({ label, value }) => ({ label, value }));
+  } catch {
     return [];
-  });
+  }
 }
 
 export function isDatasetFieldGroupable(field: DatasetFieldDefinition): boolean {
@@ -179,10 +181,6 @@ export function getDatasetCellValue(
     : row.values[field.id] ?? null;
 }
 
-function isEmptyValue(value: JsonValue): boolean {
-  return value === null || value === '' || (Array.isArray(value) && value.length === 0);
-}
-
 function normalizeComparableValue(value: JsonValue, kind: DatasetFieldKind): number | string {
   if (kind === 'number') {
     const numberValue = typeof value === 'number' ? value : Number(value);
@@ -205,8 +203,8 @@ function matchesFilter(
 ): boolean {
   const cellValue = getDatasetCellValue(row, field);
   const filterValue = rule.value ?? null;
-  if (rule.operator === 'is_empty') return isEmptyValue(cellValue);
-  if (rule.operator === 'is_not_empty') return !isEmptyValue(cellValue);
+  if (rule.operator === 'is_empty') return isEmptyJsonValue(cellValue);
+  if (rule.operator === 'is_not_empty') return !isEmptyJsonValue(cellValue);
   if (rule.operator === 'contains_any'
     || rule.operator === 'contains_all'
     || rule.operator === 'not_contains') {
@@ -231,8 +229,8 @@ function matchesFilter(
 }
 
 function compareValues(left: JsonValue, right: JsonValue, kind: DatasetFieldKind): number {
-  const leftEmpty = isEmptyValue(left);
-  const rightEmpty = isEmptyValue(right);
+  const leftEmpty = isEmptyJsonValue(left);
+  const rightEmpty = isEmptyJsonValue(right);
   if (leftEmpty && rightEmpty) return 0;
   if (leftEmpty) return 1;
   if (rightEmpty) return -1;
@@ -255,6 +253,34 @@ export function formatDatasetCellValue(value: JsonValue): string {
   return String(value);
 }
 
+/** Format a Dataset value with current choice labels, including cascader path semantics. */
+export function formatDatasetFieldValue(
+  field: DatasetFieldDefinition,
+  value: JsonValue,
+  locale = 'zh-CN',
+): string {
+  if ((field.kind === 'single_select' || field.kind === 'multi_select')) {
+    try {
+      const config = normalizeDatasetChoiceConfig(field.kind, field.config);
+      if (config.optionMode === 'cascader') {
+        return resolveDatasetChoicePathLabels(config.options, value, locale)?.join(' / ')
+          ?? formatDatasetCellValue(value);
+      }
+      const labels = new Map(config.options.map((option) => [
+        option.value,
+        option.i18n?.[locale] || option.label,
+      ]));
+      if (Array.isArray(value)) {
+        return value.map((item) => labels.get(String(item)) ?? String(item)).join('、');
+      }
+      return labels.get(String(value)) ?? formatDatasetCellValue(value);
+    } catch {
+      return formatDatasetCellValue(value);
+    }
+  }
+  return formatDatasetCellValue(value);
+}
+
 /** 将表单控件草稿解析为 Dataset JSON 值，供单元格与整行对话框共用。 */
 export function parseDatasetFieldInputValue(
   field: DatasetFieldDefinition,
@@ -271,6 +297,20 @@ export function parseDatasetFieldInputValue(
   if (field.kind === 'multi_select'
     || (field.kind === 'relation' && field.relationCardinality === 'many')) {
     const value = Array.isArray(input) ? input.map(String) : [];
+    if (field.kind === 'multi_select') {
+      try {
+        const config = normalizeDatasetChoiceConfig(field.kind, field.config);
+        if (config.optionMode === 'cascader') {
+          return {
+            value,
+            valid: (!field.required && value.length === 0)
+              || isCompleteChoicePath(config.options, value),
+          };
+        }
+      } catch {
+        return { value, valid: false };
+      }
+    }
     return { value, valid: !field.required || value.length > 0 };
   }
   if (field.kind === 'json') {
@@ -341,7 +381,7 @@ function aggregateRows(
   if (!field) return null;
   const values = rows
     .map((row) => getDatasetCellValue(row, field))
-    .filter((value) => !isEmptyValue(value));
+    .filter((value) => !isEmptyJsonValue(value));
   if (rule.operation === 'count_non_empty') return values.length;
   if (values.length === 0) return null;
   if (field.kind === 'number') {

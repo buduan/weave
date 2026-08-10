@@ -1,4 +1,5 @@
 import type { JsonSchema, JsonSchemaObject } from '@weave/types';
+import { isRecord } from './json-guards';
 
 export type { JsonSchema, JsonSchemaObject, JsonValue } from '@weave/types';
 
@@ -24,7 +25,7 @@ export function parseJsonSchema(source: string): JsonSchema {
     return parsed;
   }
 
-  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+  if (isRecord(parsed)) {
     return parsed as JsonSchemaObject;
   }
 

@@ -7,8 +7,11 @@ import { getDatasetCellFinalizeActions } from './dataset-cell';
 import {
   applyDatasetQuery,
   cloneDatasetQuery,
+  formatDatasetFieldValue,
   getDatasetFilterOperators,
+  parseDatasetFieldInputValue,
 } from './dataset-query';
+import type { DatasetFieldDefinition } from '@weave/types';
 import type { DatasetFilterOperator, DatasetTableQuery } from './types';
 
 function operatorValues(fieldId: string): DatasetFilterOperator[] {
@@ -136,5 +139,51 @@ describe('dataset query draft and cell finalization', () => {
     expect(getDatasetCellFinalizeActions(true, true)).toEqual(['commit', 'release']);
     expect(getDatasetCellFinalizeActions(false, true)).toEqual(['release']);
     expect(getDatasetCellFinalizeActions(true, false)).toEqual(['release']);
+  });
+});
+
+describe('Dataset cascader adapters', () => {
+  const cascaderField: DatasetFieldDefinition = {
+    id: 'field-path',
+    datasetId: 'dataset-1',
+    key: 'path',
+    name: 'Path',
+    description: null,
+    kind: 'multi_select',
+    valueSchema: { type: 'array', items: { type: 'string' } },
+    config: {
+      optionMode: 'cascader',
+      options: [{
+        value: 'root',
+        label: 'Root',
+        i18n: { 'zh-CN': '根' },
+        children: [
+          { value: 'leaf-a', label: 'Leaf A', i18n: { 'zh-CN': '叶 A' } },
+          { value: 'leaf-b', label: 'Leaf B' },
+        ],
+      }],
+    },
+    required: true,
+    isSystemManaged: false,
+    systemKey: null,
+    relationTargetDatasetId: null,
+    relationCardinality: null,
+    position: 0,
+    revision: 1,
+    archivedAt: null,
+  };
+
+  it('parses exactly one complete root-to-leaf path', () => {
+    expect(parseDatasetFieldInputValue(cascaderField, ['root', 'leaf-a']))
+      .toEqual({ valid: true, value: ['root', 'leaf-a'] });
+    expect(parseDatasetFieldInputValue(cascaderField, ['root']).valid).toBe(false);
+    expect(parseDatasetFieldInputValue(cascaderField, ['root', 'missing']).valid).toBe(false);
+  });
+
+  it('displays the ordered localized path instead of a flat multi-select list', () => {
+    expect(formatDatasetFieldValue(cascaderField, ['root', 'leaf-a'], 'zh-CN'))
+      .toBe('根 / 叶 A');
+    expect(formatDatasetFieldValue(cascaderField, ['root', 'leaf-b'], 'en'))
+      .toBe('Root / Leaf B');
   });
 });

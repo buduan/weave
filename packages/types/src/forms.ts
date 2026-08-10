@@ -1,4 +1,5 @@
 import type { JsonSchema, JsonSchemaObject, JsonValue } from './json';
+import type { DatasetChoiceOption } from './datasets';
 
 /** 多语言文案映射，key 为 BCP 47 locale。 */
 export type LocalizedText = Record<string, string>;
@@ -27,6 +28,18 @@ export type FormWriteMode = (typeof formWriteModes)[number];
 /** 提交操作结果：已创建 或 已更新。 */
 export const formSubmissionOperations = ['created', 'updated'] as const;
 export type FormSubmissionOperation = (typeof formSubmissionOperations)[number];
+
+/** Form renderer 支持的规范化 widget 名称。 */
+export const formWidgets = [
+  'input',
+  'textarea',
+  'checkbox',
+  'radio',
+  'selector',
+  'cascader',
+  'tags-input',
+] as const;
+export type FormWidget = (typeof formWidgets)[number];
 
 // ---- availableIf 条件表达式 ----
 
@@ -127,13 +140,14 @@ export interface FormItemUiOptions {
 /** Form item 的 UI 配置。 */
 export interface FormItemUi {
   options?: FormItemUiOptions;
-  placeholder?: LocalizedText;
-  widget: string;
+  widget?: FormWidget;
 }
 
 /** Form item 的 x-form 扩展（字段映射、i18n、UI、条件显示）。 */
 export interface FormItemExtension {
   datasetFieldId: string;
+  /** 稳定展示顺序；新写入的 Schema 必须从 0 开始连续编号。 */
+  position: number;
   i18n?: FormItemI18n;
   ui?: FormItemUi;
   availableIf?: AvailableIfExpression;
@@ -216,6 +230,7 @@ export const formAvailabilityReasons = [
   'not_started',
   'closed',
   'inactive',
+  'configuration_invalid',
   'subject_row_missing',
 ] as const;
 export type FormAvailabilityReason = (typeof formAvailabilityReasons)[number];
@@ -239,6 +254,7 @@ export interface PublishedFormDefinition {
   submissionAccess: FormSubmissionAccess;
   writeMode: FormWriteMode;
   schema: JsonSchema;
+  choiceOptions: Record<FormItemId, DatasetChoiceOption[]>;
   acceptingSubmissions: boolean;
   unavailableReason: FormAvailabilityReason | null;
   submissionContext: FormSubmissionContext | null;

@@ -11,6 +11,7 @@
     "prisma:migrate": "dotenv -e ../../.env -- prisma migrate dev --schema prisma/schema.prisma",
     "prisma:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
     "test": "vitest run",
+    "test:db": "dotenv -e ../../.env -- vitest run --config vitest.integration.config.ts",
     "typecheck": "pnpm prisma:generate && pnpm --filter @weave/types build && pnpm --filter @weave/utils build && tsc --noEmit -p tsconfig.build.json"
   },
   "dependencies": {

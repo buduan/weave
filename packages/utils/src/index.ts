@@ -1,8 +1,14 @@
 export { parseJsonSchema } from './parse-json-schema';
 export type { JsonSchema, JsonSchemaObject, JsonValue } from './parse-json-schema';
 export * from './dataset-query';
+export * from './dataset-choices';
 export * from './form-schema';
+export * from './json-clone';
+export * from './form-runtime';
+export * from './form-ajv';
 export * from './identity';
 export * from './json';
+export * from './json-guards';
 export * from './password-policy';
+export * from './relation-filter';
 export * from './visible-if';

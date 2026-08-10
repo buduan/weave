@@ -30,15 +30,23 @@ import type {
   FormSummary,
   FormVersionDefinition,
   HeartbeatFormEditLockResult,
+  JsonSchema,
   JsonValue,
   PublishedFormDefinition,
   ReleaseFormEditLockResult,
-  RelationFilterCondition,
-  RelationFilterExpression,
 } from '@weave/types';
-import { checksumJson, resolveLocalizedText } from '@weave/utils';
+import {
+  checksumJson,
+  evaluateFormAnswers,
+  evaluateRelationFilter,
+  normalizeFormSchemaPositions,
+  parseFormSchema,
+  projectCurrentFormFields,
+  resolveLocalizedText,
+} from '@weave/utils';
 
 import { AuditService } from '../audit/audit.service';
+import { lockDatasetParent, lockFormParent } from '../common/aggregate-locks';
 import { DatasetsService } from '../datasets/datasets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -69,6 +77,16 @@ interface FormEditLockRecord {
 }
 
 const editLockTtlSeconds = 90;
+const formStatusTransitions: Record<FormStatus, readonly FormStatus[]> = {
+  [FormStatus.active]: [FormStatus.closed, FormStatus.archived],
+  [FormStatus.closed]: [FormStatus.active, FormStatus.archived],
+  [FormStatus.archived]: [FormStatus.active],
+};
+
+function formStatusesAllowing(status: FormStatus): FormStatus[] {
+  return Object.values(FormStatus)
+    .filter((previousStatus) => formStatusTransitions[previousStatus].includes(status));
+}
 
 const panelFormInclude = Prisma.validator<Prisma.FormInclude>()({
   activeVersion: true,
@@ -186,7 +204,23 @@ export class FormsService {
     this.validateMetadata(dto);
     try {
       const created = await this.prisma.$transaction(async (tx) => {
-        const { schema, checksum } = await this.prepareFormSchema(tx, dataset, dto, actor.userId);
+        await lockDatasetParent(
+          tx,
+          dataset.id,
+          this.hasCaptureConfiguration(dto.schema) ? 'update' : 'share',
+        );
+        const currentDataset = await tx.dataset.findUnique({ where: { id: dataset.id } });
+        if (!currentDataset
+          || currentDataset.workspaceId !== workspaceId
+          || currentDataset.status !== DatasetStatus.active) {
+          throw new ConflictException('Dataset is archived or changed concurrently');
+        }
+        const { schema, checksum } = await this.prepareFormSchema(
+          tx,
+          currentDataset,
+          dto,
+          actor.userId,
+        );
         const form = await tx.form.create({
           data: {
             workspaceId,
@@ -248,7 +282,22 @@ export class FormsService {
     await this.assertEditLock(workspaceId, formId, lockToken, actor.userId);
     this.validateMetadata(dto);
     const saved = await this.prisma.$transaction(async (tx) => {
-      const { schema, checksum } = await this.prepareFormSchema(tx, dataset, dto, actor.userId);
+      await lockDatasetParent(tx, dataset.id, 'update');
+      await lockFormParent(tx, formId, 'update');
+      const { currentDataset } = await this.findCurrentFormDataset(
+        tx,
+        workspaceId,
+        dataset.id,
+        formId,
+        undefined,
+        'Form or Dataset is archived or changed concurrently',
+      );
+      const { schema, checksum } = await this.prepareFormSchema(
+        tx,
+        currentDataset,
+        dto,
+        actor.userId,
+      );
       const latest = await tx.formVersion.findFirst({
         where: { formId },
         orderBy: { version: 'desc' },
@@ -316,6 +365,16 @@ export class FormsService {
     }
     await this.assertEditLock(workspaceId, formId, lockToken, actor.userId);
     const published = await this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, dataset.id, 'share');
+      await lockFormParent(tx, formId, 'update');
+      const { currentDataset, currentForm } = await this.findCurrentFormDataset(
+        tx,
+        workspaceId,
+        dataset.id,
+        formId,
+        FormStatus.active,
+        'Form and Dataset must be active and consistently bound',
+      );
       const draft = await tx.formVersion.findFirst({
         where: { formId, state: FormVersionState.draft },
         orderBy: { version: 'desc' },
@@ -332,7 +391,7 @@ export class FormsService {
       });
       await this.validateDefinition(
         tx,
-        dataset,
+        currentDataset,
         draft.schema as Record<string, unknown>,
         draft,
       );
@@ -346,9 +405,9 @@ export class FormsService {
       });
       if (result.count !== 1) throw new ConflictException('Form draft revision is stale');
       // 将旧活跃版本标记为 retired。
-      if (form.activeVersionId) {
+      if (currentForm.activeVersionId) {
         await tx.formVersion.update({
-          where: { id: form.activeVersionId },
+          where: { id: currentForm.activeVersionId },
           data: { state: FormVersionState.retired },
         });
       }
@@ -371,25 +430,111 @@ export class FormsService {
     return this.toVersionDefinition(published);
   }
 
-  /** 变更 Form 状态（active/closed/archived），归档 Form 仅允许恢复为 active。 */
+  public close(
+    workspaceId: number,
+    formId: string,
+    expectedRevision: number,
+    actor: AuthenticatedActor,
+  ) {
+    return this.changeStatus(
+      workspaceId,
+      formId,
+      expectedRevision,
+      FormStatus.closed,
+      actor,
+      [FormStatus.active],
+    );
+  }
+
+  public reopen(
+    workspaceId: number,
+    formId: string,
+    expectedRevision: number,
+    actor: AuthenticatedActor,
+  ) {
+    return this.changeStatus(
+      workspaceId,
+      formId,
+      expectedRevision,
+      FormStatus.active,
+      actor,
+      [FormStatus.closed],
+    );
+  }
+
+  public archive(
+    workspaceId: number,
+    formId: string,
+    expectedRevision: number,
+    actor: AuthenticatedActor,
+  ) {
+    return this.changeStatus(
+      workspaceId,
+      formId,
+      expectedRevision,
+      FormStatus.archived,
+      actor,
+      [FormStatus.active, FormStatus.closed],
+    );
+  }
+
+  public restore(
+    workspaceId: number,
+    formId: string,
+    expectedRevision: number,
+    actor: AuthenticatedActor,
+  ) {
+    return this.changeStatus(
+      workspaceId,
+      formId,
+      expectedRevision,
+      FormStatus.active,
+      actor,
+      [FormStatus.archived],
+    );
+  }
+
+  /** 按显式状态机变更 Form 状态，并与提交共享 Dataset → Form 锁序。 */
   public async changeStatus(
     workspaceId: number,
     formId: string,
     expectedRevision: number,
     status: FormStatus,
     actor: AuthenticatedActor,
+    allowedPreviousStatuses = formStatusesAllowing(status),
   ) {
     const form = await this.findForm(workspaceId, formId);
     await this.findManagedDataset(workspaceId, form.datasetId, actor);
-    if (form.status === FormStatus.archived && status !== FormStatus.active) {
-      throw new ConflictException('Archived Form can only be restored');
-    }
-    if (form.status !== FormStatus.archived && status === FormStatus.active) {
-      throw new ConflictException('Form is not archived');
-    }
     const updated = await this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, form.datasetId, 'share');
+      await lockFormParent(tx, formId, 'update');
+      const [currentDataset, currentForm] = await Promise.all([
+        tx.dataset.findUnique({ where: { id: form.datasetId } }),
+        tx.form.findUnique({ where: { id: formId } }),
+      ]);
+      if (!currentDataset
+        || currentDataset.workspaceId !== workspaceId
+        || !currentForm
+        || currentForm.workspaceId !== workspaceId
+        || currentForm.datasetId !== currentDataset.id) {
+        throw new ConflictException('Form and Dataset binding changed concurrently');
+      }
+      if (currentForm.revision !== expectedRevision) {
+        throw new ConflictException('Form revision is stale');
+      }
+      if (!formStatusTransitions[currentForm.status].includes(status)
+        || !allowedPreviousStatuses.includes(currentForm.status)) {
+        throw new ConflictException(
+          `Form cannot transition from ${currentForm.status} to ${status}`,
+        );
+      }
       const result = await tx.form.updateMany({
-        where: { id: formId, workspaceId, revision: expectedRevision },
+        where: {
+          id: formId,
+          workspaceId,
+          revision: expectedRevision,
+          status: currentForm.status,
+        },
         data: { status, revision: { increment: 1 } },
       });
       if (result.count !== 1) throw new ConflictException('Form revision is stale');
@@ -401,7 +546,7 @@ export class FormsService {
         resourceId: formId,
         result: 'success',
         workspaceId,
-        metadata: { status },
+        metadata: { previousStatus: currentForm.status, status },
       }, tx);
       return tx.form.findUniqueOrThrow({ where: { id: formId } });
     });
@@ -512,7 +657,26 @@ return redis.call('DEL', KEYS[1])`,
   public async getPublished(formId: string): Promise<PublishedFormDefinition> {
     const form = await this.findPublishedForm(formId);
     const version = form.activeVersion;
-    const availability = this.publishedAvailability(form);
+    const fields = await this.prisma.datasetField.findMany({
+      where: { datasetId: form.datasetId },
+    });
+    let runtimeSchema = version.schema as PublishedFormDefinition['schema'];
+    let choiceOptions: PublishedFormDefinition['choiceOptions'] = {};
+    let configurationInvalid = false;
+    try {
+      const parsed = parseFormSchema(runtimeSchema, { mode: 'legacy' });
+      const projected = projectCurrentFormFields(parsed, fields as never, {
+        locale: version.defaultLocale,
+      });
+      runtimeSchema = projected.schema;
+      choiceOptions = projected.choiceOptions as PublishedFormDefinition['choiceOptions'];
+      configurationInvalid = projected.configurationInvalidItemIds.length > 0;
+    } catch {
+      configurationInvalid = true;
+    }
+    const availability = configurationInvalid
+      ? { acceptingSubmissions: false as const, unavailableReason: 'configuration_invalid' as const }
+      : this.publishedAvailability(form);
     return {
       id: form.id,
       version: version.version,
@@ -524,7 +688,8 @@ return redis.call('DEL', KEYS[1])`,
       closesAt: version.closesAt?.toISOString() ?? null,
       submissionAccess: version.submissionAccess,
       writeMode: version.writeMode,
-      schema: version.schema as PublishedFormDefinition['schema'],
+      schema: runtimeSchema,
+      choiceOptions,
       ...availability,
       submissionContext: null,
     };
@@ -545,15 +710,18 @@ return redis.call('DEL', KEYS[1])`,
       throw new BadRequestException('Relation option take must be between 1 and 100');
     }
     const form = await this.findPublishedForm(formId);
-    const schema = form.activeVersion.schema as Record<string, unknown>;
-    const property = (schema.properties as Record<string, Record<string, unknown>>)?.[itemId];
-    if (!property) throw new NotFoundException('Form item not found');
-    const extension = property['x-form'] as Record<string, unknown>;
-    const ui = extension.ui as Record<string, unknown> | undefined;
-    const options = ui?.options as Record<string, unknown> | undefined;
-    const field = await this.prisma.datasetField.findUnique({
-      where: { id: extension.datasetFieldId as string },
+    const parsed = parseFormSchema(form.activeVersion.schema as PublishedFormDefinition['schema'], {
+      mode: 'legacy',
     });
+    const item = parsed.items.find((candidate) => candidate.id === itemId);
+    if (!item) throw new NotFoundException('Form item not found');
+    const options = item.extension.ui?.options;
+    const sourceFields = await this.prisma.datasetField.findMany({
+      where: { datasetId: form.datasetId },
+    });
+    const field = sourceFields.find((candidate) => (
+      candidate.id === item.extension.datasetFieldId
+    ));
     if (!field
       || field.datasetId !== form.datasetId
       || field.archivedAt
@@ -562,20 +730,32 @@ return redis.call('DEL', KEYS[1])`,
       || typeof options?.labelFieldId !== 'string') {
       throw new BadRequestException('Form item is not a relation selector');
     }
-    const values = this.parseCurrentValues(rawValues);
+    const suppliedValues = this.parseCurrentValues(rawValues);
+    const projected = projectCurrentFormFields(parsed, sourceFields as never, {
+      locale: form.activeVersion.defaultLocale,
+    });
+    const evaluated = evaluateFormAnswers({
+      parsed,
+      runtimeSchema: projected.schema,
+      inputAnswers: suppliedValues,
+      rejectExplicitHidden: false,
+    });
+    if (evaluated.unknownItemIds.length > 0) {
+      throw new BadRequestException('Relation option values contain unknown Form items');
+    }
     // 查询目标 Dataset 的活跃行（上限 500，内存过滤后再截断至 take）。
     const rows = await this.prisma.datasetRow.findMany({
       where: { datasetId: field.relationTargetDatasetId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
       take: 500,
     });
-    const filter = options?.filter as RelationFilterExpression | undefined;
-    const labelFieldId = options?.labelFieldId as string;
+    const { filter } = options;
+    const { labelFieldId } = options;
     return rows
-      .filter((row) => this.matchesFilter(
-        row.values as Record<string, JsonValue>,
+      .filter((row) => evaluateRelationFilter(
         filter,
-        values,
+        row.values as Record<string, JsonValue>,
+        evaluated.answers,
       ))
       .slice(0, take)
       .map((row) => {
@@ -851,6 +1031,31 @@ return redis.call('DEL', KEYS[1])`,
     }
   }
 
+  private async findCurrentFormDataset(
+    tx: Prisma.TransactionClient,
+    workspaceId: number,
+    datasetId: string,
+    formId: string,
+    expectedFormStatus: FormStatus | undefined,
+    errorMessage: string,
+  ) {
+    const [currentDataset, currentForm] = await Promise.all([
+      tx.dataset.findUnique({ where: { id: datasetId } }),
+      tx.form.findUnique({ where: { id: formId } }),
+    ]);
+    if (!currentDataset
+      || currentDataset.workspaceId !== workspaceId
+      || currentDataset.status !== DatasetStatus.active
+      || !currentForm
+      || currentForm.workspaceId !== workspaceId
+      || currentForm.datasetId !== currentDataset.id
+      || currentForm.status === FormStatus.archived
+      || (expectedFormStatus !== undefined && currentForm.status !== expectedFormStatus)) {
+      throw new ConflictException(errorMessage);
+    }
+    return { currentDataset, currentForm };
+  }
+
   /** 按 ID 查找 Form，验证其属于指定 Workspace。 */
   private async findForm(workspaceId: number, formId: string) {
     const form = await this.prisma.form.findUnique({ where: { id: formId } });
@@ -891,48 +1096,6 @@ return redis.call('DEL', KEYS[1])`,
   }
 
   /**
-   * 根据 filter 表达式筛选行。
-   * filter.all → 所有条件均满足；filter.any → 任一条件满足。
-   */
-  private matchesFilter(
-    row: Record<string, JsonValue>,
-    filter: RelationFilterExpression | undefined,
-    formValues: Record<string, JsonValue>,
-  ): boolean {
-    if (!filter) return true;
-    const conditions = filter.all ?? filter.any ?? [];
-    const results = conditions.map(
-      (condition) => this.matchesCondition(row, condition, formValues),
-    );
-    return filter.all ? results.every(Boolean) : results.some(Boolean);
-  }
-
-  /**
-   * 判断单个筛选条件是否成立。
-   * 支持 equals、not_equals、in、contains、is_empty、is_not_empty。
-   * valueFrom 引用当前 Form 其他 item 的值，实现级联筛选。
-   */
-  private matchesCondition(
-    row: Record<string, JsonValue>,
-    condition: RelationFilterCondition,
-    formValues: Record<string, JsonValue>,
-  ): boolean {
-    const actual = row[condition.fieldId];
-    const expected = condition.valueFrom ? formValues[condition.valueFrom] : condition.value;
-    if (condition.operator === 'is_empty') return actual === undefined || actual === null || actual === '';
-    if (condition.operator === 'is_not_empty') return actual !== undefined && actual !== null && actual !== '';
-    if (actual === undefined || expected === undefined) return false;
-    if (condition.operator === 'equals') return Object.is(actual, expected);
-    if (condition.operator === 'not_equals') return !Object.is(actual, expected);
-    if (condition.operator === 'in') return Array.isArray(expected) && expected.includes(actual);
-    if (condition.operator === 'contains') {
-      return (typeof actual === 'string' && typeof expected === 'string' && actual.includes(expected))
-        || (Array.isArray(actual) && actual.includes(expected));
-    }
-    return false;
-  }
-
-  /**
    * 在事务中准备 Form Schema：深拷贝、处理设备信息采集字段、校验定义、计算校验和。
    */
   private async prepareFormSchema(
@@ -941,11 +1104,28 @@ return redis.call('DEL', KEYS[1])`,
     dto: Pick<VersionDefinitionInput, 'schema' | 'defaultLocale' | 'nameI18n' | 'submissionAccess' | 'writeMode'>,
     userId: string,
   ): Promise<{ schema: Record<string, unknown>; checksum: string }> {
-    const schema = structuredClone(dto.schema);
+    let schema: Record<string, unknown>;
+    try {
+      schema = normalizeFormSchemaPositions(dto.schema as JsonSchema) as Record<string, unknown>;
+    } catch (error) {
+      throw new BadRequestException(
+        `Invalid Form Schema: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     await this.ensureCaptureFields(tx, dataset.id, schema, userId);
     await this.validateDefinition(tx, dataset, schema, dto);
     const checksum = await checksumJson(schema as JsonValue);
     return { schema, checksum };
+  }
+
+  private hasCaptureConfiguration(schema: Record<string, unknown>): boolean {
+    const root = schema['x-form'];
+    if (!root || typeof root !== 'object' || Array.isArray(root)) return false;
+    const { capture } = (root as Record<string, unknown>);
+    return Boolean(capture
+      && typeof capture === 'object'
+      && !Array.isArray(capture)
+      && Object.keys(capture).length > 0);
   }
 
   /**

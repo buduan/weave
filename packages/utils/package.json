@@ -12,6 +12,8 @@
     "typecheck": "pnpm --filter @weave/types build && tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@weave/types": "workspace:*"
+    "@weave/types": "workspace:*",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }

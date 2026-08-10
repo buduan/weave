@@ -5,6 +5,7 @@ import type {
 } from '@weave/types';
 
 import { canonicalizeJson } from './json';
+import { isEmptyJsonValue, isRecord } from './json-guards';
 
 /** 已注册的叶子操作符集合。 */
 const leafOperators = new Set<AvailableIfLeafOperator>([
@@ -16,11 +17,6 @@ const leafOperators = new Set<AvailableIfLeafOperator>([
   'is_empty',
   'is_not_empty',
 ]);
-
-/** 判断值是否为普通 Record（非数组、非 null）。 */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /** 递归判断值是否可安全序列化为 JSON。 */
 function isJsonValue(value: unknown): value is JsonValue {
@@ -103,12 +99,6 @@ function equal(left: JsonValue, right: JsonValue): boolean {
   return canonicalizeJson(left) === canonicalizeJson(right);
 }
 
-/** 判断值是否为空（undefined、null、空字符串、空数组）。 */
-function isEmpty(value: JsonValue | undefined): boolean {
-  return value === undefined || value === null || value === ''
-    || (Array.isArray(value) && value.length === 0);
-}
-
 /** 解析并校验不可信的 availableIf 表达式。 */
 export function parseAvailableIf(input: unknown): AvailableIfExpression {
   return parseExpression(input);
@@ -138,8 +128,8 @@ export function evaluateAvailableIf(
 
   // 叶子表达式。
   const current = values[expression.fieldId];
-  if (expression.operator === 'is_empty') return isEmpty(current);
-  if (expression.operator === 'is_not_empty') return !isEmpty(current);
+  if (expression.operator === 'is_empty') return isEmptyJsonValue(current);
+  if (expression.operator === 'is_not_empty') return !isEmptyJsonValue(current);
   // 字段缺失时（除空值判断外）返回 false。
   if (current === undefined) return false;
 

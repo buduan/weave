@@ -97,7 +97,11 @@ function schemaFor(kind: DatasetFieldKind): JsonSchema {
 function config(): JsonObject {
   if (!isSelect.value) return {};
   return {
-    options: form.optionsText.split('\n').map((item) => item.trim()).filter(Boolean),
+    options: form.optionsText
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => ({ label: item, value: item })),
   };
 }
 

@@ -1,6 +1,15 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
-import { PrismaService } from '../prisma/prisma.service';
+import {
+  lockDatasetRowsByMode,
+  type DatasetRowLockRequest,
+  type LockedDatasetRow,
+} from './aggregate-locks';
+
+export interface RelationValidationOptions {
+  updateRowIds?: readonly string[];
+}
 
 /**
  * 关联目标验证服务。
@@ -10,8 +19,6 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 @Injectable()
 export class RelationValidationService {
-  public constructor(private readonly prisma: PrismaService) {}
-
   /**
    * 批量验证关联目标行存在且属于正确的 Dataset。
    *
@@ -21,23 +28,32 @@ export class RelationValidationService {
    * @throws BadRequestException 当任何目标行不存在或不属于预期 Dataset 时
    */
   public async validate(
+    tx: Prisma.TransactionClient,
     workspaceId: number,
     fields: Array<{ id: string; relationTargetDatasetId: string | null }>,
     relations: Map<string, string[]>,
-  ): Promise<void> {
-    const ids = [...new Set([...relations.values()].flat())];
-    const rows = ids.length === 0
-      ? []
-      : await this.prisma.datasetRow.findMany({
-        where: { id: { in: ids }, workspaceId, deletedAt: null },
-        select: { id: true, datasetId: true },
-      });
-    const datasetByRow = new Map(rows.map((row) => [row.id, row.datasetId]));
+    options: RelationValidationOptions = {},
+  ): Promise<LockedDatasetRow[]> {
+    const ids = [...new Set([...relations.values()].flat())].sort();
+    const lockRequests: DatasetRowLockRequest[] = [
+      ...ids.map((id) => ({ id, mode: 'share' as const })),
+      ...(options.updateRowIds ?? []).map((id) => ({ id, mode: 'update' as const })),
+    ];
+    const lockedRows = await lockDatasetRowsByMode(tx, lockRequests);
+    const rows = lockedRows.filter((row) => ids.includes(row.id));
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
     const fieldsById = new Map(fields.map((f) => [f.id, f]));
     relations.forEach((targetIds, fieldId) => {
       const expected = fieldsById.get(fieldId)?.relationTargetDatasetId;
-      const invalid = targetIds.find((id) => datasetByRow.get(id) !== expected);
+      const invalid = targetIds.find((id) => {
+        const row = rowsById.get(id);
+        return !row
+          || row.deletedAt !== null
+          || row.workspaceId !== workspaceId
+          || row.datasetId !== expected;
+      });
       if (invalid) throw new BadRequestException(`Invalid relation target: ${invalid}`);
     });
+    return rows;
   }
 }

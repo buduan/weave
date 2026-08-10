@@ -5,6 +5,7 @@ export {
   createDatasetGroupDirectory,
   EMPTY_DATASET_QUERY,
   formatDatasetCellValue,
+  formatDatasetFieldValue,
   getDatasetAggregateOperations,
   getDatasetCellValue,
   getDatasetFieldOptions,
@@ -13,6 +14,7 @@ export {
   hashDatasetQuery,
   isDatasetFieldGroupable,
   isDatasetQueryEmpty,
+  parseDatasetFieldInputValue,
 } from '@weave/utils';
 
 export type { DatasetFilterOperatorOption } from '@weave/utils';

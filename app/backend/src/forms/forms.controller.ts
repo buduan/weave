@@ -8,8 +8,6 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { FormStatus } from '@prisma/client';
-
 import type { AuthenticatedActor } from '@weave/types';
 
 import { CurrentActor } from '../authorization/authorization.decorators';
@@ -88,13 +86,25 @@ export class FormsController {
     @Body() dto: ChangeFormStatusDto,
     @CurrentActor() actor: AuthenticatedActor,
   ) {
-    return this.forms.changeStatus(
-      workspaceId,
-      dto.formId,
-      dto.expectedRevision,
-      FormStatus.archived,
-      actor,
-    );
+    return this.forms.archive(workspaceId, dto.formId, dto.expectedRevision, actor);
+  }
+
+  @Post('closeForm')
+  public closeForm(
+  @Param('workspaceId', ParseIntPipe) workspaceId: number,
+    @Body() dto: ChangeFormStatusDto,
+    @CurrentActor() actor: AuthenticatedActor,
+  ) {
+    return this.forms.close(workspaceId, dto.formId, dto.expectedRevision, actor);
+  }
+
+  @Post('reopenForm')
+  public reopenForm(
+  @Param('workspaceId', ParseIntPipe) workspaceId: number,
+    @Body() dto: ChangeFormStatusDto,
+    @CurrentActor() actor: AuthenticatedActor,
+  ) {
+    return this.forms.reopen(workspaceId, dto.formId, dto.expectedRevision, actor);
   }
 
   @Post('unarchiveForm')
@@ -103,13 +113,7 @@ export class FormsController {
     @Body() dto: ChangeFormStatusDto,
     @CurrentActor() actor: AuthenticatedActor,
   ) {
-    return this.forms.changeStatus(
-      workspaceId,
-      dto.formId,
-      dto.expectedRevision,
-      FormStatus.active,
-      actor,
-    );
+    return this.forms.restore(workspaceId, dto.formId, dto.expectedRevision, actor);
   }
 
   @Post('acquireFormEditLock')

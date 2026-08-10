@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui';
+import type { FormStatus } from '@weave/types';
 import { computed } from '#imports';
+import {
+  formLifecycleActions,
+  formStatusPresentation,
+  type FormLifecycleAction,
+} from '~/utils/form-lifecycle';
 
 const props = withDefaults(defineProps<{
   title?: string;
@@ -8,16 +14,20 @@ const props = withDefaults(defineProps<{
   dirty?: boolean;
   disabled?: boolean;
   lockLabel?: string;
+  lifecyclePending?: boolean;
   publishing?: boolean;
   saving?: boolean;
+  status?: FormStatus;
 }>(), {
   title: '未命名表单',
   creatorName: '未知创建人',
   dirty: false,
   disabled: false,
   lockLabel: '正在连接编辑会话',
+  lifecyclePending: false,
   publishing: false,
   saving: false,
+  status: 'active',
 });
 
 const emit = defineEmits<{
@@ -25,29 +35,43 @@ const emit = defineEmits<{
   source: [];
   save: [];
   publish: [];
+  lifecycle: [action: FormLifecycleAction];
 }>();
 
-const actionItems = computed<DropdownMenuItem[][]>(() => [[
-  {
-    label: '源码',
-    icon: 'i-solar-code-bold-duotone',
-    disabled: props.disabled,
-    onSelect: () => emit('source'),
-  },
-  {
-    label: '保存',
-    icon: 'i-solar-diskette-bold-duotone',
-    disabled: props.disabled || props.saving,
-    onSelect: () => emit('save'),
-  },
-  {
-    label: '发布',
-    icon: 'i-solar-upload-bold-duotone',
-    color: 'primary',
-    disabled: props.disabled || props.publishing,
-    onSelect: () => emit('publish'),
-  },
-]]);
+const lifecycleActions = computed(() => formLifecycleActions(props.status));
+const statusPresentation = computed(() => formStatusPresentation(props.status));
+const lifecycleMenuItems = computed<DropdownMenuItem[]>(() => lifecycleActions.value.map(
+  (action) => ({
+    label: action.label,
+    icon: action.icon,
+    disabled: props.lifecyclePending,
+    onSelect: () => emit('lifecycle', action.action),
+  }),
+));
+const actionItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    {
+      label: '源码',
+      icon: 'i-solar-code-bold-duotone',
+      disabled: props.disabled,
+      onSelect: () => emit('source'),
+    },
+    {
+      label: '保存',
+      icon: 'i-solar-diskette-bold-duotone',
+      disabled: props.disabled || props.saving,
+      onSelect: () => emit('save'),
+    },
+    {
+      label: '发布',
+      icon: 'i-solar-upload-bold-duotone',
+      color: 'primary',
+      disabled: props.disabled || props.publishing || props.status !== 'active',
+      onSelect: () => emit('publish'),
+    },
+  ],
+  lifecycleMenuItems.value,
+]);
 </script>
 
 <template>
@@ -89,6 +113,12 @@ const actionItems = computed<DropdownMenuItem[][]>(() => [[
             variant="subtle"
             size="sm"
           />
+          <UBadge
+            :label="statusPresentation.label"
+            :color="statusPresentation.color"
+            variant="subtle"
+            size="sm"
+          />
         </p>
       </div>
     </div>
@@ -99,7 +129,7 @@ const actionItems = computed<DropdownMenuItem[][]>(() => [[
         icon="i-solar-code-bold-duotone"
         color="neutral"
         variant="outline"
-        :disabled="props.disabled"
+        :disabled="props.disabled || props.status !== 'active'"
         class="rounded-xl active:translate-y-px"
         @click="emit('source')"
       />
@@ -122,6 +152,19 @@ const actionItems = computed<DropdownMenuItem[][]>(() => [[
         class="rounded-xl active:translate-y-px"
         @click="emit('publish')"
       />
+      <UDropdownMenu
+        :items="[lifecycleMenuItems]"
+        :content="{ align: 'end', side: 'bottom', sideOffset: 8 }"
+      >
+        <UButton
+          label="状态"
+          icon="i-solar-tuning-square-2-bold-duotone"
+          color="neutral"
+          variant="outline"
+          :loading="props.lifecyclePending"
+          class="rounded-xl active:translate-y-px"
+        />
+      </UDropdownMenu>
     </div>
 
     <UDropdownMenu

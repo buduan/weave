@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module';
+import { CommonModule } from '../common/common.module';
 import { DatasetRowsService } from './dataset-rows.service';
 import { DatasetSchemaService } from './dataset-schema.service';
 import { DatasetsController } from './datasets.controller';
@@ -13,7 +14,7 @@ import { MembersSyncService } from './members-sync.service';
  * 避免产生循环依赖。
  */
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, CommonModule],
   controllers: [DatasetsController],
   providers: [DatasetsService, DatasetRowsService, DatasetSchemaService, MembersSyncService],
   exports: [DatasetsService, DatasetRowsService, DatasetSchemaService, MembersSyncService],

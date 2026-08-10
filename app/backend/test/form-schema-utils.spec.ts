@@ -18,7 +18,9 @@ import {
   getRequiredItemIds,
   getRootExtension,
   isItemVisible,
+  normalizeFormSchemaPositions,
   parseAvailableIf,
+  parseFormSchema,
   resolveLocalizedText,
   validateFormSchemaExtensions,
 } from '@weave/utils';
@@ -107,15 +109,16 @@ describe('shared Form Schema utilities', () => {
       properties: {
         [controllingId]: {
           type: 'string',
-          'x-form': { datasetFieldId: 'dataset-field-1' },
+          'x-form': { datasetFieldId: 'dataset-field-1', position: 0 },
         },
         [dependentId]: {
           type: 'string',
           'x-form': {
             datasetFieldId: 'dataset-field-2',
+            position: 1,
             i18n: { title: { 'en-US': 'City', 'zh-CN': '城市' } },
             ui: {
-              widget: 'dataset-select',
+              widget: 'selector',
               options: {
                 labelFieldId: 'dataset-field-name',
                 filter: {
@@ -149,6 +152,142 @@ describe('shared Form Schema utilities', () => {
     missingReference.properties[dependentId]['x-form'].availableIf.fieldId = 'q_missing';
     expect(() => validateFormSchemaExtensions(missingReference))
       .toThrow('Unknown availableIf Form item');
+  });
+
+  it('parses required membership and renders by position instead of property key order', () => {
+    const firstId = 'q_00000000-0000-4000-8000-000000000001';
+    const secondId = 'q_00000000-0000-4000-8000-000000000002';
+    const schema = {
+      type: 'object',
+      properties: {
+        [secondId]: {
+          type: 'boolean',
+          'x-form': { datasetFieldId: 'field-2', position: 1 },
+        },
+        [firstId]: {
+          type: 'string',
+          'x-form': {
+            datasetFieldId: 'field-1',
+            position: 0,
+            ui: { widget: 'input' },
+          },
+        },
+      },
+      required: [secondId],
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+
+    const parsed = parseFormSchema(schema);
+
+    expect(parsed.items.map((item) => item.id)).toEqual([firstId, secondId]);
+    expect(parsed.items.map((item) => item.widget)).toEqual(['input', 'checkbox']);
+    expect(parsed.items.map((item) => item.required)).toEqual([false, true]);
+    expect(parsed.items[0]?.property).toBe(schema.properties[firstId]);
+    expect(parsed.diagnostics).toEqual([]);
+  });
+
+  it('normalizes legacy missing positions without mutating the source', () => {
+    const firstId = 'q_00000000-0000-4000-8000-000000000001';
+    const secondId = 'q_00000000-0000-4000-8000-000000000002';
+    const schema = {
+      type: 'object',
+      properties: {
+        [secondId]: {
+          type: 'string',
+          'x-form': { datasetFieldId: 'field-2', ui: { widget: 'dataset-select' } },
+        },
+        [firstId]: {
+          type: 'string',
+          'x-form': { datasetFieldId: 'field-1' },
+        },
+      },
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+
+    const parsed = parseFormSchema(schema, { mode: 'legacy' });
+    const normalized = normalizeFormSchemaPositions(schema);
+
+    expect(parsed.items.map((item) => [item.id, item.position]))
+      .toEqual([[secondId, 0], [firstId, 1]]);
+    expect(parsed.items[0]?.widget).toBe('selector');
+    expect(parsed.diagnostics.map((diagnostic) => diagnostic.code))
+      .toEqual(['legacy_position_fallback', 'legacy_widget_alias']);
+    expect(normalized.properties?.[secondId]?.['x-form']).toMatchObject({ position: 0 });
+    expect(normalized.properties?.[firstId]?.['x-form']).toMatchObject({ position: 1 });
+    expect(schema.properties[secondId]['x-form']).not.toHaveProperty('position');
+    expect(() => validateFormSchemaExtensions(schema)).toThrow('position is required');
+  });
+
+  it('validates root required, positions, extension members and dependency topology', () => {
+    const firstId = 'q_00000000-0000-4000-8000-000000000001';
+    const secondId = 'q_00000000-0000-4000-8000-000000000002';
+    const thirdId = 'q_00000000-0000-4000-8000-000000000003';
+    const schema = {
+      type: 'object',
+      properties: {
+        [thirdId]: {
+          type: 'string',
+          'x-form': {
+            datasetFieldId: 'field-3',
+            position: 2,
+            ui: {
+              options: {
+                filter: {
+                  all: [{ fieldId: 'target', operator: 'equals', valueFrom: secondId }],
+                },
+              },
+            },
+          },
+        },
+        [secondId]: {
+          type: 'string',
+          'x-form': {
+            datasetFieldId: 'field-2',
+            position: 1,
+            availableIf: { fieldId: firstId, operator: 'equals', value: 'yes' },
+          },
+        },
+        [firstId]: {
+          type: 'string',
+          'x-form': { datasetFieldId: 'field-1', position: 0 },
+        },
+      },
+      required: [thirdId],
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+
+    expect(parseFormSchema(schema).topologicalItems.map((item) => item.id))
+      .toEqual([firstId, secondId, thirdId]);
+
+    const duplicateRequired = structuredClone(schema);
+    duplicateRequired.required = [thirdId, thirdId];
+    expect(() => parseFormSchema(duplicateRequired)).toThrow('Duplicate Form Schema required item');
+
+    const unknownRequired = structuredClone(schema);
+    unknownRequired.required = ['q_00000000-0000-4000-8000-000000000099'];
+    expect(() => parseFormSchema(unknownRequired)).toThrow('Unknown Form Schema required item');
+
+    const nonContiguous = structuredClone(schema);
+    nonContiguous.properties[thirdId]['x-form'].position = 3;
+    expect(() => parseFormSchema(nonContiguous)).toThrow('unique and contiguous');
+
+    const forbiddenRequired = structuredClone(schema);
+    Object.assign(forbiddenRequired.properties[firstId]['x-form'], { required: true });
+    expect(() => parseFormSchema(forbiddenRequired)).toThrow('Unknown Form item x-form property');
+
+    const cyclic = structuredClone(schema);
+    cyclic.properties[firstId]['x-form'].availableIf = {
+      fieldId: thirdId,
+      operator: 'is_not_empty',
+    };
+    expect(() => parseFormSchema(cyclic)).toThrow('Cyclic Form item dependencies');
+
+    const selfReference = structuredClone(schema);
+    selfReference.properties[firstId]['x-form'].availableIf = {
+      fieldId: firstId,
+      operator: 'is_not_empty',
+    };
+    expect(() => parseFormSchema(selfReference)).toThrow('cannot depend on itself');
   });
 
   it('soft-reads extensions, choices, locale text, and defaults without throwing', () => {

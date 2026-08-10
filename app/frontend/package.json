@@ -6,6 +6,7 @@
     "build": "nuxt build",
     "dev": "nuxt dev --dotenv ../../.env --host 0.0.0.0",
     "preview": "nuxt preview --host 0.0.0.0",
+    "test": "vitest run",
     "typecheck": "pnpm --filter @weave/types build && pnpm --filter @weave/utils build && nuxt typecheck"
   },
   "dependencies": {

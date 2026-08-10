@@ -110,18 +110,18 @@ importers:
       '@nestjs/swagger':
         specifier: ^11.4.6
         version: 11.4.6(@nestjs/common@11.1.28(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)
-      '@weave/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@weave/utils':
-        specifier: workspace:*
-        version: link:../../packages/utils
       '@prisma/client':
         specifier: ^6.19.0
         version: 6.19.3(prisma@6.19.3(typescript@6.0.3))(typescript@6.0.3)
       '@simplewebauthn/server':
         specifier: ^13.3.2
         version: 13.3.2
+      '@weave/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@weave/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -174,12 +174,6 @@ importers:
       '@nuxt/ui':
         specifier: ^4.10.0
         version: 4.10.0(3fead22f921f480dcae801d2a962f3c4)
-      '@weave/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@weave/utils':
-        specifier: workspace:*
-        version: link:../../packages/utils
       '@pinia/nuxt':
         specifier: 'catalog:'
         version: 1.0.1(magicast@0.5.3)(pinia@4.0.2(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))
@@ -192,6 +186,12 @@ importers:
       '@vueuse/core':
         specifier: ^13.9.0
         version: 13.9.0(vue@3.5.40(typescript@6.0.3))
+      '@weave/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@weave/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -231,6 +231,12 @@ importers:
       '@weave/types':
         specifier: workspace:*
         version: link:../types
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
 
 packages:
 

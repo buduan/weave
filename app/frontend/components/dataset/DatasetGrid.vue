@@ -28,7 +28,12 @@ import {
   validateDatasetGroupDirectory,
 } from './dataset-display';
 import type { DatasetDisplayItem } from './dataset-display';
-import { formatDatasetCellValue, getDatasetCellValue, getDatasetFieldOptions } from './dataset-query';
+import {
+  formatDatasetCellValue,
+  formatDatasetFieldValue,
+  getDatasetCellValue,
+  getDatasetFieldOptions,
+} from './dataset-query';
 import type {
   DatasetCellCoordinates,
   DatasetCellDraftState,
@@ -769,7 +774,7 @@ function retryMetadata(): void {
                 :title="getMutation(entry.row.id, field.id)?.message
                   ?? (getLock(entry.row.id, field.id)?.status === 'remote'
                     ? `${getLock(entry.row.id, field.id)?.ownerName ?? '其他用户'}正在编辑`
-                    : formatDatasetCellValue(getDatasetCellValue(entry.row, field)))"
+                    : formatDatasetFieldValue(field, getDatasetCellValue(entry.row, field)))"
                 @click="requestCellEdit(entry.row.id, field)"
               >
                 <UIcon
@@ -783,7 +788,7 @@ function retryMetadata(): void {
                   class="size-3.5 shrink-0 animate-spin"
                 />
                 <span class="block min-w-0 flex-1 truncate">
-                  {{ formatDatasetCellValue(getDatasetCellValue(entry.row, field)) || '—' }}
+                  {{ formatDatasetFieldValue(field, getDatasetCellValue(entry.row, field)) || '—' }}
                 </span>
               </button>
             </div>

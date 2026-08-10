@@ -13,7 +13,9 @@ import type {
   SubmitFormResult,
 } from '@weave/types';
 import {
-  createInitialFormState,
+  cloneJson,
+  evaluateFormAnswers,
+  parseFormSchema,
   resolveLocalizedText,
 } from '@weave/utils';
 
@@ -44,9 +46,14 @@ const fieldErrors = ref<Record<FormItemId, string>>({});
 const formErrors = ref<string[]>([]);
 
 function resetFillingState(): void {
-  answers.value = structuredClone(
-    props.form.submissionContext?.answers ?? createInitialFormState(props.form.schema),
-  );
+  const inputAnswers = cloneJson(props.form.submissionContext?.answers ?? {});
+  const parsed = parseFormSchema(props.form.schema, { mode: 'legacy' });
+  answers.value = evaluateFormAnswers({
+    parsed,
+    runtimeSchema: parsed.schema,
+    inputAnswers,
+    rejectExplicitHidden: false,
+  }).answers;
   locale.value = props.form.defaultLocale;
   fieldErrors.value = {};
   formErrors.value = [];
@@ -93,12 +100,16 @@ const closingMessage = computed(() => resolveLocalizedText(
 const requiresLogin = computed(() => (
   props.form.submissionAccess === 'authentication_required' && !props.authenticated
 ));
-const unavailableCopy = computed(() => ({
-  not_started: ['尚未开放', '这个表单还没有开始收集回答，请稍后再来。'],
-  closed: ['填写已结束', '这个表单目前不再接收新的回答。'],
-  inactive: ['暂不可用', '表单所使用的数据集当前不可用。'],
-  subject_row_missing: ['没有可更新的资料', '你的账号尚未关联到这个表单所需的资料行。'],
-}[props.form.unavailableReason ?? 'closed']));
+const unavailableCopy = computed<[string, string]>(() => {
+  const copies = {
+    not_started: ['尚未开放', '这个表单还没有开始收集回答，请稍后再来。'],
+    closed: ['填写已结束', '这个表单目前不再接收新的回答。'],
+    inactive: ['暂不可用', '表单所使用的数据集当前不可用。'],
+    subject_row_missing: ['没有可更新的资料', '你的账号尚未关联到这个表单所需的资料行。'],
+    configuration_invalid: ['配置暂不可用', '表单当前的字段或选项配置无效，请联系管理员。'],
+  } satisfies Record<NonNullable<PublishedFormDefinition['unavailableReason']>, [string, string]>;
+  return copies[props.form.unavailableReason ?? 'closed'];
+});
 
 function submit(): void {
   if (props.pending || props.submitted || !props.form.acceptingSubmissions || requiresLogin.value) {
@@ -253,6 +264,7 @@ function submit(): void {
           :locale="locale"
           :default-locale="form.defaultLocale"
           :errors="fieldErrors"
+          :choice-options="form.choiceOptions"
           :load-relation-options="loadRelationOptions"
           @submit="submit"
         >

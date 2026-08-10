@@ -7,6 +7,7 @@ import {
 import {
   DatasetRowVersionOperation,
   DatasetStatus,
+  DatasetType,
   Prisma,
 } from '@prisma/client';
 
@@ -30,6 +31,8 @@ import {
 } from '@weave/utils';
 
 import { AuditService } from '../audit/audit.service';
+import { lockDatasetParent, lockDatasetRows } from '../common/aggregate-locks';
+import { RelationValidationService } from '../common/relation-validation.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { DatasetSchemaService, type ValidatedRowInput } from './dataset-schema.service';
 import type { DatasetRowValuesInput, UpdateDatasetRowInput } from './dataset-input';
@@ -52,6 +55,7 @@ export class DatasetRowsService {
     private readonly datasets: DatasetsService,
     private readonly schemas: DatasetSchemaService,
     private readonly audit: AuditService,
+    private readonly relationValidation: RelationValidationService,
   ) {}
 
   /**
@@ -253,11 +257,12 @@ export class DatasetRowsService {
     actor: AuthenticatedActor,
   ) {
     await this.datasets.assertCanCreateRows(workspaceId, datasetId, actor);
-    const fields = await this.prisma.datasetField.findMany({ where: { datasetId } });
-    const validated = this.schemas.validateRow(fields, dto);
-    await this.validateRelationTargets(workspaceId, fields, validated);
-
     return this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, datasetId, 'share');
+      await this.assertCurrentDatasetState(tx, workspaceId, datasetId, 'create');
+      const fields = await tx.datasetField.findMany({ where: { datasetId } });
+      const validated = this.schemas.validateRow(fields, dto);
+      await this.relationValidation.validate(tx, workspaceId, fields, validated.relations);
       const row = await tx.datasetRow.create({
         data: {
           workspaceId,
@@ -308,27 +313,38 @@ export class DatasetRowsService {
     actor: AuthenticatedActor,
   ) {
     await this.datasets.assertCanUpdateRows(workspaceId, datasetId, actor);
-    const [row, fields] = await Promise.all([
-      this.prisma.datasetRow.findUnique({
-        where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
-        include: { sourceRelations: true },
-      }),
-      this.prisma.datasetField.findMany({ where: { datasetId } }),
-    ]);
-    if (!row) throw new NotFoundException('Dataset row not found');
-    if (row.deletedAt) throw new ConflictException('Deleted Dataset row must be restored before update');
-    // 部分更新模式：以现有值为基础，仅覆盖传入字段。
-    const validated = this.schemas.validateRow(
-      fields,
-      dto,
-      row.values as Prisma.JsonObject,
-      true,
-    );
-    await this.validateRelationTargets(workspaceId, fields, validated);
-    // 合并新旧关联：传入的字段替换，未传的保留。
-    const resultingRelations = this.mergeRelations(row.sourceRelations, validated.relations);
-
     return this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, datasetId, 'share');
+      await this.assertCurrentDatasetState(tx, workspaceId, datasetId, 'update');
+      const fields = await tx.datasetField.findMany({ where: { datasetId } });
+      const initialRow = await tx.datasetRow.findUnique({
+        where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
+      });
+      if (!initialRow) throw new NotFoundException('Dataset row not found');
+      const initialValidated = this.schemas.validateRow(
+        fields,
+        dto,
+        initialRow.values as Prisma.JsonObject,
+        true,
+      );
+      await this.relationValidation.validate(
+        tx,
+        workspaceId,
+        fields,
+        initialValidated.relations,
+        { updateRowIds: [rowId] },
+      );
+      const row = await this.findRowWithSourceRelations(tx, workspaceId, datasetId, rowId);
+      if (row.deletedAt) {
+        throw new ConflictException('Deleted Dataset row must be restored before update');
+      }
+      const validated = this.schemas.validateRow(
+        fields,
+        dto,
+        row.values as Prisma.JsonObject,
+        true,
+      );
+      const resultingRelations = this.mergeRelations(row.sourceRelations, validated.relations);
       const result = await tx.datasetRow.updateMany({
         where: {
           id: rowId, workspaceId, datasetId, revision: dto.expectedRevision, deletedAt: null,
@@ -387,16 +403,13 @@ export class DatasetRowsService {
     actor: AuthenticatedActor,
   ) {
     await this.datasets.assertCanDeleteRows(workspaceId, datasetId, actor);
-    const row = await this.prisma.datasetRow.findUnique({
-      where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
-      include: { sourceRelations: true },
-    });
-    if (!row) throw new NotFoundException('Dataset row not found');
-    // 检查是否有其他行通过关联字段引用当前行。
-    const incoming = await this.prisma.datasetRelation.count({ where: { targetRowId: rowId } });
-    if (incoming > 0) throw new ConflictException('Dataset row is referenced by another row');
-
     return this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, datasetId, 'share');
+      await this.assertCurrentDatasetState(tx, workspaceId, datasetId, 'delete');
+      await lockDatasetRows(tx, [rowId], 'update');
+      const row = await this.findRowWithSourceRelations(tx, workspaceId, datasetId, rowId);
+      const incoming = await tx.datasetRelation.count({ where: { targetRowId: rowId } });
+      if (incoming > 0) throw new ConflictException('Dataset row is referenced by another row');
       const result = await tx.datasetRow.updateMany({
         where: {
           id: rowId, workspaceId, datasetId, revision: expectedRevision, deletedAt: null,
@@ -428,7 +441,7 @@ export class DatasetRowsService {
         metadata: { datasetId, rowVersionId: version.id },
       }, tx);
       return updated;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }
 
   /**
@@ -446,34 +459,44 @@ export class DatasetRowsService {
   ) {
     const dataset = await this.datasets.assertCanManage(workspaceId, datasetId, actor);
     this.assertActive(dataset.status);
-    const [row, snapshot, fields] = await Promise.all([
-      this.prisma.datasetRow.findUnique({
-        where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
-      }),
-      this.prisma.datasetRowVersion.findUnique({ where: { id: versionId } }),
-      this.prisma.datasetField.findMany({ where: { datasetId } }),
-    ]);
-    if (!row || !snapshot || snapshot.rowId !== rowId) {
-      throw new NotFoundException('Dataset row or version not found');
-    }
-    if (!row.deletedAt) throw new ConflictException('Dataset row is not deleted');
-    const relationsObject = this.asRelationsObject(snapshot.relationsSnapshot);
-    let validated: ValidatedRowInput;
-    try {
-      // 恢复时临时解除系统字段保护，以便重新校验历史值。
-      validated = this.schemas.validateRow(
-        fields.map((field) => ({ ...field, isSystemManaged: false })),
-        { values: snapshot.valuesSnapshot as Record<string, unknown>, relations: relationsObject },
-      );
-      await this.validateRelationTargets(workspaceId, fields, validated);
-    } catch (error) {
-      throw new ConflictException({
-        message: 'Historical row is incompatible with the current Dataset definition',
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-
     return this.prisma.$transaction(async (tx) => {
+      await lockDatasetParent(tx, datasetId, 'share');
+      await this.assertCurrentDatasetState(tx, workspaceId, datasetId, 'restore');
+      const [snapshot, fields] = await Promise.all([
+        tx.datasetRowVersion.findUnique({ where: { id: versionId } }),
+        tx.datasetField.findMany({ where: { datasetId } }),
+      ]);
+      if (!snapshot || snapshot.rowId !== rowId) {
+        throw new NotFoundException('Dataset row or version not found');
+      }
+      const relationsObject = this.asRelationsObject(snapshot.relationsSnapshot);
+      let validated: ValidatedRowInput;
+      try {
+        validated = this.schemas.validateRow(
+          fields.map((field) => ({ ...field, isSystemManaged: false })),
+          {
+            values: snapshot.valuesSnapshot as Record<string, unknown>,
+            relations: relationsObject,
+          },
+        );
+        await this.relationValidation.validate(
+          tx,
+          workspaceId,
+          fields,
+          validated.relations,
+          { updateRowIds: [rowId] },
+        );
+      } catch (error) {
+        throw new ConflictException({
+          message: 'Historical row is incompatible with the current Dataset definition',
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const row = await tx.datasetRow.findUnique({
+        where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
+      });
+      if (!row) throw new NotFoundException('Dataset row or version not found');
+      if (!row.deletedAt) throw new ConflictException('Dataset row is not deleted');
       const result = await tx.datasetRow.updateMany({
         where: {
           id: rowId, workspaceId, datasetId, revision: expectedRevision, deletedAt: { not: null },
@@ -554,27 +577,37 @@ export class DatasetRowsService {
     });
   }
 
-  /**
-   * 批量验证关联目标：每个关联值指向的行必须存在且属于该字段声明的目标 Dataset。
-   */
-  private async validateRelationTargets(
+  private async assertCurrentDatasetState(
+    tx: Prisma.TransactionClient,
     workspaceId: number,
-    fields: RelationFieldShape[],
-    validated: ValidatedRowInput,
+    datasetId: string,
+    operation: 'create' | 'delete' | 'restore' | 'update',
   ): Promise<void> {
-    const ids = [...new Set([...validated.relations.values()].flat())];
-    if (ids.length === 0) return;
-    const rows = await this.prisma.datasetRow.findMany({
-      where: { id: { in: ids }, workspaceId, deletedAt: null },
-      select: { id: true, datasetId: true },
+    const dataset = await tx.dataset.findUnique({ where: { id: datasetId } });
+    if (!dataset || dataset.workspaceId !== workspaceId) {
+      throw new NotFoundException('Dataset not found');
+    }
+    if (dataset.status !== DatasetStatus.active) throw new ConflictException('Dataset is archived');
+    const compatible = operation === 'update'
+      ? dataset.type === DatasetType.standard || dataset.type === DatasetType.members
+      : operation === 'restore'
+        ? dataset.type !== DatasetType.activity_registrations
+        : dataset.type === DatasetType.standard;
+    if (!compatible) throw new ConflictException(`Dataset type does not allow row ${operation}`);
+  }
+
+  private async findRowWithSourceRelations(
+    tx: Prisma.TransactionClient,
+    workspaceId: number,
+    datasetId: string,
+    rowId: string,
+  ) {
+    const row = await tx.datasetRow.findUnique({
+      where: { workspaceId_datasetId_id: { workspaceId, datasetId, id: rowId } },
+      include: { sourceRelations: true },
     });
-    const found = new Map(rows.map((row) => [row.id, row.datasetId]));
-    const fieldMap = new Map(fields.map((field) => [field.id, field]));
-    validated.relations.forEach((targets, fieldId) => {
-      const targetDatasetId = fieldMap.get(fieldId)?.relationTargetDatasetId;
-      const invalid = targets.find((targetId) => found.get(targetId) !== targetDatasetId);
-      if (invalid) throw new BadRequestException(`Invalid relation target: ${invalid}`);
-    });
+    if (!row) throw new NotFoundException('Dataset row not found');
+    return row;
   }
 
   /**

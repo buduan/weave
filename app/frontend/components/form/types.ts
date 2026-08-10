@@ -4,9 +4,12 @@ import type {
   InjectionKey,
 } from 'vue';
 import type {
+  DatasetChoiceOption,
+  FormItemExtension,
   FormItemId,
   FormRelationOption,
-  JsonSchema,
+  FormWidget,
+  JsonSchemaObject,
   JsonValue,
 } from '@weave/types';
 
@@ -25,6 +28,19 @@ export type FocusableInputInstance =
 /** FormRenderer 模式：编辑器选中 vs 填写。 */
 export type FormRenderMode = 'edit' | 'fill';
 
+/** Parsed and locale-resolved item consumed by FormField without re-reading the root Schema. */
+export interface ResolvedFormItem {
+  choiceOptions: readonly DatasetChoiceOption[];
+  description?: string;
+  extension: FormItemExtension;
+  id: FormItemId;
+  placeholder?: string;
+  property: JsonSchemaObject;
+  required: boolean;
+  title: string;
+  widget: FormWidget;
+}
+
 /** FormRenderer → FormField 的共享上下文。 */
 export interface FormRenderContext {
   defaultLocale: string;
@@ -35,7 +51,6 @@ export interface FormRenderContext {
   ) => Promise<FormRelationOption[]>;
   locale: string;
   mode: FormRenderMode;
-  schema: JsonSchema;
   state: Record<FormItemId, JsonValue | undefined>;
 }
 
@@ -43,4 +58,4 @@ export const formRenderContextKey: InjectionKey<ComputedRef<FormRenderContext>> 
   'form-render-context',
 );
 
-export type { FormItemId, JsonSchema, JsonValue };
+export type { FormItemId, JsonValue };

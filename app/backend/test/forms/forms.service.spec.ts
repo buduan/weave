@@ -13,6 +13,7 @@ import {
   FormVersionState,
   FormWriteMode,
 } from '@prisma/client';
+import type { Sql } from '@prisma/client/runtime/library';
 import {
   describe,
   expect,
@@ -36,6 +37,7 @@ const actor: AuthenticatedActor = {
 
 describe('Form publication', () => {
   it('does not replace the active version when draft CAS fails', async () => {
+    const events: string[] = [];
     const form = {
       id: 'form-1',
       workspaceId: 1,
@@ -44,9 +46,31 @@ describe('Form publication', () => {
       activeVersionId: 'published-1',
     };
     const tx = {
-      dataset: { findMany: vi.fn().mockResolvedValue([]) },
+      $queryRaw: vi.fn((query: Sql) => {
+        events.push(query.strings.join('').includes('Dataset"') ? 'dataset-lock' : 'form-lock');
+        return [];
+      }),
+      dataset: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockImplementation(() => {
+          events.push('dataset-read');
+          return {
+            id: 'dataset-1',
+            workspaceId: 1,
+            status: DatasetStatus.active,
+            subjectMode: DatasetSubjectMode.none,
+            type: DatasetType.standard,
+          };
+        }),
+      },
       datasetField: { findMany: vi.fn().mockResolvedValue([]) },
-      form: { update: vi.fn() },
+      form: {
+        findUnique: vi.fn().mockImplementation(() => {
+          events.push('form-read');
+          return form;
+        }),
+        update: vi.fn(),
+      },
       formVersion: {
         findFirst: vi.fn().mockResolvedValue({
           id: 'draft-2',
@@ -98,6 +122,131 @@ describe('Form publication', () => {
       ConflictException,
     );
     expect(tx.form.update).not.toHaveBeenCalled();
+    expect(events.slice(0, 4)).toEqual([
+      'dataset-lock',
+      'form-lock',
+      'dataset-read',
+      'form-read',
+    ]);
+    const queries = tx.$queryRaw.mock.calls.map(([query]) => query as Sql);
+    expect(queries[0]!.strings.join('')).toContain('FOR SHARE');
+    expect(queries[1]!.strings.join('')).toContain('FOR UPDATE');
+  });
+});
+
+describe('Form draft aggregate ordering', () => {
+  it('keeps a closed Form draft editable after Dataset and Form locks', async () => {
+    const events: string[] = [];
+    const form = {
+      id: 'form-1',
+      workspaceId: 1,
+      datasetId: 'dataset-1',
+      status: FormStatus.closed,
+    };
+    const dataset = {
+      id: 'dataset-1',
+      workspaceId: 1,
+      status: DatasetStatus.active,
+      subjectMode: DatasetSubjectMode.none,
+      type: DatasetType.standard,
+    };
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+    const updatedVersion = {
+      id: 'draft-1',
+      formId: 'form-1',
+      version: 1,
+      state: FormVersionState.draft,
+      defaultLocale: 'en',
+      nameI18n: { en: 'Form' },
+      descriptionI18n: null,
+      closingMessageI18n: null,
+      opensAt: null,
+      closesAt: null,
+      submissionAccess: FormSubmissionAccess.anonymous_allowed,
+      writeMode: FormWriteMode.create_row,
+      schema,
+      schemaChecksum: 'checksum',
+      revision: 2,
+    };
+    const tx = {
+      $queryRaw: vi.fn((query: Sql) => {
+        events.push(query.strings.join('').includes('Dataset"') ? 'dataset-lock' : 'form-lock');
+        return [];
+      }),
+      dataset: {
+        findUnique: vi.fn().mockImplementation(() => {
+          events.push('dataset-read');
+          return dataset;
+        }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      form: {
+        findUnique: vi.fn().mockImplementation(() => {
+          events.push('form-read');
+          return form;
+        }),
+        update: vi.fn(),
+      },
+      datasetField: {
+        findMany: vi.fn().mockImplementation(() => {
+          events.push('field-read');
+          return [];
+        }),
+      },
+      formVersion: {
+        findFirst: vi.fn().mockResolvedValue({ ...updatedVersion, revision: 1 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue(updatedVersion),
+      },
+    };
+    const prisma = {
+      form: { findUnique: vi.fn().mockResolvedValue(form) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const validator = { validate: vi.fn() };
+    const audit = { record: vi.fn() };
+    const service = new FormsService(
+      prisma as never,
+      { assertCanManage: vi.fn().mockResolvedValue(dataset) } as never,
+      validator as never,
+      audit as never,
+      {
+        get: vi.fn().mockResolvedValue(JSON.stringify({
+          userId: actor.userId,
+          holderName: 'Admin',
+          lockedAt: new Date().toISOString(),
+          token: 'lock-token',
+        })),
+      } as never,
+    );
+
+    await service.updateDraft(1, 'form-1', {
+      expectedRevision: 1,
+      defaultLocale: 'en',
+      nameI18n: { en: 'Form' },
+      submissionAccess: FormSubmissionAccess.anonymous_allowed,
+      writeMode: FormWriteMode.create_row,
+      schema,
+    }, actor, 'lock-token');
+
+    expect(events.slice(0, 4)).toEqual([
+      'dataset-lock',
+      'form-lock',
+      'dataset-read',
+      'form-read',
+    ]);
+    expect(events.indexOf('field-read')).toBeGreaterThan(events.indexOf('form-lock'));
+    const queries = tx.$queryRaw.mock.calls.map(([query]) => query as Sql);
+    expect(queries.every((query) => query.strings.join('').includes('FOR UPDATE'))).toBe(true);
+    expect(validator.validate).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'form.draft.update',
+    }), tx);
   });
 });
 
@@ -272,7 +421,12 @@ function publicForm(overrides: Record<string, unknown> = {}) {
       closesAt: null,
       submissionAccess: FormSubmissionAccess.anonymous_allowed,
       writeMode: FormWriteMode.create_row,
-      schema: { type: 'object', properties: {} },
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {},
+        'x-form': { version: 1, datasetId: 'dataset-public', capture: {} },
+      },
       schemaChecksum: 'internal-checksum',
       revision: 9,
     },
@@ -292,7 +446,10 @@ function publicService(prisma: object): FormsService {
 
 describe('Published Form filling projection', () => {
   it('loads a published Form by global ID outside Workspace 1 without exposing management data', async () => {
-    const prisma = { form: { findUnique: vi.fn().mockResolvedValue(publicForm()) } };
+    const prisma = {
+      form: { findUnique: vi.fn().mockResolvedValue(publicForm()) },
+      datasetField: { findMany: vi.fn().mockResolvedValue([]) },
+    };
 
     const result = await publicService(prisma).getPublished('form-public');
 
@@ -328,6 +485,7 @@ describe('Published Form filling projection', () => {
   ])('reports unavailable published states without hiding the definition', async (record, reason) => {
     const result = await publicService({
       form: { findUnique: vi.fn().mockResolvedValue(record) },
+      datasetField: { findMany: vi.fn().mockResolvedValue([]) },
     }).getPublished('form-public');
 
     expect(result).toMatchObject({
@@ -354,13 +512,19 @@ describe('Published Form filling projection', () => {
         ...publicForm().activeVersion,
         schema: {
           type: 'object',
+          additionalProperties: false,
           properties: {
+            [countryItemId]: {
+              type: 'string',
+              'x-form': { datasetFieldId: 'field-country-source', position: 0 },
+            },
             [cityItemId]: {
               type: 'string',
               'x-form': {
                 datasetFieldId: 'field-city',
+                position: 1,
                 ui: {
-                  widget: 'dataset-select',
+                  widget: 'selector',
                   options: {
                     labelFieldId: 'field-label',
                     filter: {
@@ -375,19 +539,37 @@ describe('Published Form filling projection', () => {
               },
             },
           },
+          'x-form': { version: 1, datasetId: 'dataset-public', capture: {} },
         },
       },
     });
     const prisma = {
       form: { findUnique: vi.fn().mockResolvedValue(record) },
       datasetField: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: 'field-city',
-          datasetId: 'dataset-public',
-          archivedAt: null,
-          kind: DatasetFieldKind.relation,
-          relationTargetDatasetId: 'dataset-cities',
-        }),
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'field-country-source',
+            datasetId: 'dataset-public',
+            archivedAt: null,
+            kind: DatasetFieldKind.text,
+            valueSchema: { type: 'string' },
+            config: {},
+            isSystemManaged: false,
+            relationCardinality: null,
+            relationTargetDatasetId: null,
+          },
+          {
+            id: 'field-city',
+            datasetId: 'dataset-public',
+            archivedAt: null,
+            kind: DatasetFieldKind.relation,
+            valueSchema: { type: 'string' },
+            config: {},
+            isSystemManaged: false,
+            relationCardinality: 'one',
+            relationTargetDatasetId: 'dataset-cities',
+          },
+        ]),
       },
       datasetRow: {
         findMany: vi.fn().mockResolvedValue([

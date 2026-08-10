@@ -2,6 +2,7 @@ import type {
   FormItemExtension,
   FormItemId,
   FormRootExtension,
+  FormWidget,
   JsonSchema,
   JsonSchemaObject,
   JsonValue,
@@ -10,13 +11,54 @@ import type {
   RelationFilterOperator,
   AvailableIfExpression,
 } from '@weave/types';
-import { relationFilterOperators } from '@weave/types';
+import { formWidgets, relationFilterOperators } from '@weave/types';
 
 import { evaluateAvailableIf, parseAvailableIf } from './visible-if';
+import { cloneJson } from './json-clone';
+import { isRecord } from './json-guards';
 
 /** Form item ID 格式：q_ + UUID v4。 */
 const formItemIdPattern = /^q_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const filterOperators = new Set<RelationFilterOperator>(relationFilterOperators);
+const registeredWidgets = new Set<string>(formWidgets);
+const legacyWidgetAliases: Readonly<Record<string, FormWidget>> = {
+  'dataset-select': 'selector',
+  text: 'input',
+};
+
+export type FormSchemaParseMode = 'legacy' | 'strict';
+
+export interface FormSchemaDiagnostic {
+  code: 'legacy_position_fallback' | 'legacy_widget_alias';
+  itemId?: FormItemId;
+  level: 'warning';
+  message: string;
+  path: string;
+}
+
+export interface ParsedFormItem {
+  dependencies: readonly FormItemId[];
+  extension: FormItemExtension;
+  id: FormItemId;
+  position: number;
+  property: JsonSchemaObject;
+  required: boolean;
+  widget: FormWidget;
+}
+
+export interface ParsedFormSchema {
+  diagnostics: readonly FormSchemaDiagnostic[];
+  items: readonly ParsedFormItem[];
+  properties: Readonly<Record<FormItemId, JsonSchemaObject>>;
+  requiredItemIds: ReadonlySet<FormItemId>;
+  rootExtension: FormRootExtension;
+  schema: JsonSchemaObject;
+  topologicalItems: readonly ParsedFormItem[];
+}
+
+export interface ParseFormSchemaOptions {
+  mode?: FormSchemaParseMode;
+}
 
 /** oneOf 选项投影（框架无关）。 */
 export interface FormChoiceOption {
@@ -26,15 +68,10 @@ export interface FormChoiceOption {
 
 /** 将 unknown 断言为 Record 类型。 */
 function asRecord(value: unknown, name: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`${name} must be an object`);
   }
-  return value as Record<string, unknown>;
-}
-
-/** 软判断：值为普通对象（非数组、非 null）。 */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value;
 }
 
 /** 断言对象仅包含指定 key。 */
@@ -107,10 +144,21 @@ function validateFilter(value: unknown, itemIds: ReadonlySet<string>): void {
 }
 
 /** 校验 Form item 的 UI 配置（组件类型、关联选项等）。 */
-function validateUi(value: unknown, itemIds: ReadonlySet<string>): void {
+function validateUi(
+  value: unknown,
+  itemIds: ReadonlySet<string>,
+  mode: FormSchemaParseMode,
+): void {
   const ui = asRecord(value, 'Form item ui');
   assertKeys(ui, ['options', 'widget'], 'Form item ui');
-  assertString(ui.widget, 'Form item ui widget');
+  if (ui.widget !== undefined) {
+    assertString(ui.widget, 'Form item ui widget');
+    const isRegistered = registeredWidgets.has(ui.widget);
+    const isLegacyAlias = mode === 'legacy' && legacyWidgetAliases[ui.widget] !== undefined;
+    if (!isRegistered && !isLegacyAlias) {
+      throw new TypeError(`Unknown Form item ui widget: ${ui.widget}`);
+    }
+  }
   if (ui.options === undefined) return;
   const options = asRecord(ui.options, 'Form item options');
   assertKeys(options, ['filter', 'labelFieldId'], 'Form item options');
@@ -131,12 +179,22 @@ function referencedAvailableIfFields(expression: AvailableIfExpression): string[
 function validateItemExtension(
   value: unknown,
   itemIds: ReadonlySet<string>,
+  mode: FormSchemaParseMode,
 ): void {
   const extension = asRecord(value, 'Form item x-form');
-  assertKeys(extension, ['datasetFieldId', 'i18n', 'ui', 'availableIf'], 'Form item x-form');
+  assertKeys(
+    extension,
+    ['datasetFieldId', 'position', 'i18n', 'ui', 'availableIf'],
+    'Form item x-form',
+  );
   assertString(extension.datasetFieldId, 'Form item datasetFieldId');
+  if (extension.position === undefined) {
+    if (mode === 'strict') throw new TypeError('Form item position is required');
+  } else if (!Number.isInteger(extension.position) || (extension.position as number) < 0) {
+    throw new TypeError('Form item position must be a non-negative integer');
+  }
   if (extension.i18n !== undefined) validateI18n(extension.i18n, 'Form item i18n');
-  if (extension.ui !== undefined) validateUi(extension.ui, itemIds);
+  if (extension.ui !== undefined) validateUi(extension.ui, itemIds, mode);
   if (extension.availableIf !== undefined) {
     const expression = parseAvailableIf(extension.availableIf);
     // availableIf 引用的 Form item ID 必须存在。
@@ -179,33 +237,227 @@ function validateChoiceExtensions(schema: Record<string, unknown>): void {
   });
 }
 
-/**
- * 在标准 JSON Schema 校验通过后，校验平台 x-form 扩展的合法性。
- *
- * 校验内容：
- * - Form item ID 格式（q_ + UUID v4）
- * - 每个 property 必须有 x-form 扩展
- * - datasetFieldId、i18n、ui、availableIf 结构正确
- * - 采集设置仅允许已知键
- * - properties 对象键序即字段展示顺序
- */
+/** Infer a renderer widget only when the standard Schema shape is unambiguous. */
+function inferWidget(property: Record<string, unknown>, itemId: string): FormWidget {
+  if (property.type === 'boolean') return 'checkbox';
+  if (property.type === 'array') return 'tags-input';
+  if (Array.isArray(property.oneOf) || Array.isArray(property.enum)) return 'selector';
+  if (['integer', 'number', 'string'].includes(String(property.type))) return 'input';
+  throw new TypeError(`Cannot infer Form item widget at /properties/${itemId}`);
+}
+
+function resolveWidget(
+  extension: Record<string, unknown>,
+  property: Record<string, unknown>,
+  itemId: FormItemId,
+  mode: FormSchemaParseMode,
+  diagnostics: FormSchemaDiagnostic[],
+): FormWidget {
+  const ui = isRecord(extension.ui) ? extension.ui : undefined;
+  if (typeof ui?.widget !== 'string') return inferWidget(property, itemId);
+  if (registeredWidgets.has(ui.widget)) return ui.widget as FormWidget;
+  const alias = mode === 'legacy' ? legacyWidgetAliases[ui.widget] : undefined;
+  if (!alias) throw new TypeError(`Unknown Form item ui widget: ${ui.widget}`);
+  diagnostics.push({
+    code: 'legacy_widget_alias',
+    itemId,
+    level: 'warning',
+    message: `Legacy widget ${ui.widget} is read as ${alias}`,
+    path: `/properties/${itemId}/x-form/ui/widget`,
+  });
+  return alias;
+}
+
+function parseRequiredItemIds(
+  required: unknown,
+  itemIds: ReadonlySet<FormItemId>,
+): Set<FormItemId> {
+  if (required === undefined) return new Set();
+  if (!Array.isArray(required)) throw new TypeError('Form Schema required must be an array');
+  const result = new Set<FormItemId>();
+  required.forEach((rawItemId, index) => {
+    if (typeof rawItemId !== 'string') {
+      throw new TypeError(`Form Schema required item at /required/${index} must be a string`);
+    }
+    if (!itemIds.has(rawItemId)) {
+      throw new TypeError(`Unknown Form Schema required item: ${rawItemId}`);
+    }
+    if (result.has(rawItemId)) {
+      throw new TypeError(`Duplicate Form Schema required item: ${rawItemId}`);
+    }
+    result.add(rawItemId);
+  });
+  return result;
+}
+
+function getItemDependencies(extension: FormItemExtension): FormItemId[] {
+  const dependencies = extension.availableIf
+    ? referencedAvailableIfFields(extension.availableIf)
+    : [];
+  return [...new Set([
+    ...dependencies,
+    ...getRelationFilterDependencies(extension.ui?.options?.filter),
+  ])];
+}
+
+function sortParsedItems(items: readonly ParsedFormItem[]): ParsedFormItem[] {
+  return [...items].sort((left, right) => (
+    left.position - right.position || left.id.localeCompare(right.id)
+  ));
+}
+
+function topologicallySortItems(items: readonly ParsedFormItem[]): ParsedFormItem[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const dependents = new Map<FormItemId, FormItemId[]>();
+  const indegree = new Map<FormItemId, number>();
+  items.forEach((item) => {
+    indegree.set(item.id, item.dependencies.length);
+    item.dependencies.forEach((dependencyId) => {
+      const current = dependents.get(dependencyId) ?? [];
+      current.push(item.id);
+      dependents.set(dependencyId, current);
+    });
+  });
+
+  const compareIds = (leftId: FormItemId, rightId: FormItemId): number => {
+    const left = byId.get(leftId);
+    const right = byId.get(rightId);
+    if (!left || !right) return leftId.localeCompare(rightId);
+    return left.position - right.position || left.id.localeCompare(right.id);
+  };
+  const ready = items
+    .filter((item) => indegree.get(item.id) === 0)
+    .map((item) => item.id)
+    .sort(compareIds);
+  const result: ParsedFormItem[] = [];
+
+  while (ready.length > 0) {
+    const itemId = ready.shift();
+    if (!itemId) break;
+    const item = byId.get(itemId);
+    if (!item) continue;
+    result.push(item);
+    (dependents.get(itemId) ?? []).forEach((dependentId) => {
+      const nextIndegree = (indegree.get(dependentId) ?? 0) - 1;
+      indegree.set(dependentId, nextIndegree);
+      if (nextIndegree === 0) {
+        ready.push(dependentId);
+        ready.sort(compareIds);
+      }
+    });
+  }
+
+  if (result.length !== items.length) {
+    const cyclicIds = items
+      .filter((item) => !result.some((resolved) => resolved.id === item.id))
+      .map((item) => item.id)
+      .sort(compareIds);
+    throw new TypeError(`Cyclic Form item dependencies: ${cyclicIds.join(', ')}`);
+  }
+  return result;
+}
+
+/** Parse and validate one Form Schema into the canonical runtime representation. */
+export function parseFormSchema(
+  schema: JsonSchema,
+  options: ParseFormSchemaOptions = {},
+): ParsedFormSchema {
+  const mode = options.mode ?? 'strict';
+  const root = asRecord(schema, 'Form Schema');
+  if (root.type !== 'object') throw new TypeError('Form Schema type must be object');
+  const properties = asRecord(root.properties, 'Form Schema properties');
+  const propertyEntries = Object.entries(properties);
+  const itemIds = new Set<FormItemId>(propertyEntries.map(([itemId]) => itemId));
+  const invalidId = [...itemIds].find((itemId) => !formItemIdPattern.test(itemId));
+  if (invalidId) throw new TypeError(`Invalid Form item ID: ${invalidId}`);
+  validateRootExtension(root['x-form']);
+  const requiredItemIds = parseRequiredItemIds(root.required, itemIds);
+  const diagnostics: FormSchemaDiagnostic[] = [];
+  const rawExtensions = new Map<FormItemId, Record<string, unknown>>();
+
+  propertyEntries.forEach(([itemId, rawProperty]) => {
+    const property = asRecord(rawProperty, `Form item Schema at /properties/${itemId}`);
+    if (property['x-form'] === undefined) {
+      throw new TypeError(`Form item x-form is required at /properties/${itemId}`);
+    }
+    validateItemExtension(property['x-form'], itemIds, mode);
+    validateChoiceExtensions(property);
+    rawExtensions.set(itemId, asRecord(property['x-form'], 'Form item x-form'));
+  });
+
+  const hasMissingPosition = [...rawExtensions.values()]
+    .some((extension) => extension.position === undefined);
+  if (hasMissingPosition) {
+    diagnostics.push({
+      code: 'legacy_position_fallback',
+      level: 'warning',
+      message: 'Missing item positions were read from properties declaration order',
+      path: '/properties',
+    });
+  }
+
+  const parsedItems = propertyEntries.map(([itemId, rawProperty], index): ParsedFormItem => {
+    const property = rawProperty as JsonSchemaObject;
+    const rawExtension = rawExtensions.get(itemId);
+    if (!rawExtension) throw new TypeError(`Form item x-form is required at /properties/${itemId}`);
+    const position = hasMissingPosition ? index : rawExtension.position as number;
+    const extension = { ...rawExtension, position } as unknown as FormItemExtension;
+    const dependencies = getItemDependencies(extension);
+    const selfDependency = dependencies.find((dependencyId) => dependencyId === itemId);
+    if (selfDependency) throw new TypeError(`Form item cannot depend on itself: ${itemId}`);
+    return {
+      dependencies,
+      extension,
+      id: itemId,
+      position,
+      property,
+      required: requiredItemIds.has(itemId),
+      widget: resolveWidget(rawExtension, property, itemId, mode, diagnostics),
+    };
+  });
+
+  if (!hasMissingPosition) {
+    const sortedPositions = parsedItems.map((item) => item.position).sort((a, b) => a - b);
+    sortedPositions.forEach((position, expected) => {
+      if (position !== expected) {
+        throw new TypeError('Form item positions must be unique and contiguous from 0');
+      }
+    });
+  }
+
+  const items = sortParsedItems(parsedItems);
+  const topologicalItems = topologicallySortItems(parsedItems);
+  return {
+    diagnostics,
+    items,
+    properties: Object.fromEntries(items.map((item) => [item.id, item.property])),
+    requiredItemIds,
+    rootExtension: root['x-form'] as unknown as FormRootExtension,
+    schema: root as JsonSchemaObject,
+    topologicalItems,
+  };
+}
+
+/** Return a copy whose item positions are contiguous in current render order. */
+export function normalizeFormSchemaPositions(schema: JsonSchema): JsonSchemaObject {
+  const parsed = parseFormSchema(schema, { mode: 'legacy' });
+  const normalized = cloneJson(parsed.schema);
+  const properties = normalized.properties as Record<FormItemId, JsonSchemaObject>;
+  parsed.items.forEach((item, position) => {
+    const property = properties[item.id] as JsonSchemaObject;
+    property['x-form'] = {
+      ...(property['x-form'] as Record<string, JsonValue>),
+      position,
+    };
+  });
+  return normalized;
+}
+
+/** Validate the strict write-time x-form contract. */
 export function validateFormSchemaExtensions(
   schema: JsonSchema,
 ): asserts schema is JsonSchemaObject {
-  const root = asRecord(schema, 'Form Schema');
-  const properties = asRecord(root.properties, 'Form Schema properties');
-  const itemIds = new Set(Object.keys(properties));
-  const invalidId = [...itemIds].find((itemId) => !formItemIdPattern.test(itemId));
-  if (invalidId) throw new TypeError(`Invalid Form item ID: ${invalidId}`);
-
-  Object.values(properties).forEach((rawProperty) => {
-    const property = asRecord(rawProperty, 'Form item Schema');
-    if (property['x-form'] === undefined) throw new TypeError('Form item x-form is required');
-    validateItemExtension(property['x-form'], itemIds);
-    validateChoiceExtensions(property);
-  });
-
-  validateRootExtension(root['x-form']);
+  parseFormSchema(schema, { mode: 'strict' });
 }
 
 // ---- 读路径（软解析，供渲染 / 提交映射；非法结构返回 null / 空值）----
@@ -262,8 +514,19 @@ export function getChoiceOptions(
   locale = 'zh-CN',
   fallbackLocale = 'zh-CN',
 ): FormChoiceOption[] {
-  if (!isRecord(property) || !Array.isArray(property.oneOf)) return [];
-  return property.oneOf.flatMap((rawChoice) => {
+  if (!isRecord(property)) return [];
+  const choiceSchema = property.type === 'array' && isRecord(property.items)
+    ? property.items
+    : property;
+  if (!Array.isArray(choiceSchema.oneOf)) {
+    if (!Array.isArray(choiceSchema.enum)) return [];
+    return choiceSchema.enum.flatMap((value): FormChoiceOption[] => (
+      typeof value === 'string' || typeof value === 'number'
+        ? [{ label: String(value), value }]
+        : []
+    ));
+  }
+  return choiceSchema.oneOf.flatMap((rawChoice) => {
     if (!isRecord(rawChoice) || rawChoice.const === undefined) return [];
     const value = rawChoice.const;
     if (typeof value !== 'string' && typeof value !== 'number') return [];

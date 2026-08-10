@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from '#imports';
-import type { FormItemOption, FormItemOptionInput, FormItemValue } from './types';
+import { normalizeFormItemOptions, type FormItemOptionInput, type FormItemValue } from './types';
 
 defineOptions({ inheritAttrs: false });
 
@@ -36,23 +36,10 @@ const props = withDefaults(defineProps<SelectorProps>(), {
 const model = defineModel<SelectorModel>({ default: undefined });
 const rawItems = computed(() => props.items ?? props.options ?? []);
 
-function isOption(item: FormItemOptionInput): item is FormItemOption {
-  return typeof item === 'object' && item !== null;
-}
-
-function normalizeItem(item: FormItemOptionInput): FormItemOptionInput {
-  if (!isOption(item)) return item;
-
-  const normalized: FormItemOption = { ...item };
-  const value = item[props.valueKey ?? 'value'];
-  const label = item[props.labelKey ?? 'label'];
-
-  if (typeof value === 'string' || typeof value === 'number') normalized.value = value;
-  if (typeof label === 'string') normalized.label = label;
-  return normalized;
-}
-
-const normalizedItems = computed(() => rawItems.value.map(normalizeItem));
+const normalizedItems = computed(() => normalizeFormItemOptions(rawItems.value, {
+  labelKey: props.labelKey,
+  valueKey: props.valueKey,
+}));
 
 const selectModel = computed<FormItemValue | FormItemValue[] | undefined>({
   get: () => {

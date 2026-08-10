@@ -4,16 +4,28 @@ import type { editor as MonacoEditor } from 'monaco-editor';
 import { useIntervalFn } from '@vueuse/core';
 import type {
   AcquireFormEditLockResult,
+  AvailableIfExpression,
   CreateDatasetPanelFieldRequest,
+  DatasetChoiceOption,
   DatasetFieldDefinition,
+  DatasetFieldMutationResponse,
   DatasetPanelDetail,
+  FormCaptureSettings,
   FormDraftDefinitionInput,
+  FormItemUiOptions,
   FormPanelDetail,
+  FormSubmissionAccess,
+  FormSummary,
   FormVersionDefinition,
+  FormWidget,
+  FormWriteMode,
   JsonSchemaObject,
+  JsonValue,
 } from '@weave/types';
 import {
-  createFormItemId,
+  cloneJson,
+  normalizeDatasetChoiceConfig,
+  parseFormSchema,
   resolveLocalizedText,
 } from '@weave/utils';
 import {
@@ -33,20 +45,42 @@ import {
   useToast,
   watch,
 } from '#imports';
-import {
-  createWidgetProperty,
-  formWidgetDefinitions,
-  type FormWidgetDefinition,
-} from '~/components/form/component-map';
 import { toApiError } from '~/utils/api';
 import {
+  buildFormLifecycleMutation,
+  formLifecycleActions,
+  mergeFormLifecycleSummary,
+  type FormLifecycleAction,
+} from '~/utils/form-lifecycle';
+import {
+  applyChoiceMutationResult,
+  buildChoiceUpdateRequest,
+  settleChoiceDrafts,
+} from '~/utils/form-choice-mutation';
+import {
   addFormLocale,
+  appendFormItem,
   collectFormLocales,
+  deleteFormItem,
+  duplicateFormItem,
+  moveFormItem,
   parseAndValidateFormSource,
-  setChoiceLocalizedTitle,
+  rebindFormItem,
   setFieldLocalizedText,
+  setFormDefaultLocale,
+  setFormItemAvailableIf,
+  setFormItemConstraint,
+  setFormItemDefault,
+  setFormItemRelationOptions,
+  setFormItemRequired,
+  setFormLocalizedMetadata,
   setFormTitle,
+  type FormConstraintKey,
+  validateFormEditorSchema,
 } from '~/utils/form-editor-schema';
+import {
+  getFormItemTemplate,
+} from '~/utils/form-templates/registry';
 
 definePageMeta({
   layout: 'dashboard',
@@ -68,7 +102,11 @@ const formId = computed(() => String(route.params.id));
 const detail = ref<FormPanelDetail | null>(null);
 const definition = ref<EditableDefinition | null>(null);
 const dataset = ref<DatasetPanelDetail | null>(null);
+const relationDataset = ref<DatasetPanelDetail | null>(null);
 const selectedFieldId = shallowRef<string | null>(null);
+const choiceDrafts = ref<Record<string, DatasetChoiceOption[]>>({});
+const choiceSaving = shallowRef(false);
+const choiceError = shallowRef<string | null>(null);
 const activeLocale = shallowRef('zh-CN');
 const loading = shallowRef(true);
 const pageError = shallowRef<string | null>(null);
@@ -76,6 +114,7 @@ const mutationError = shallowRef<string | null>(null);
 const dirty = shallowRef(false);
 const saving = shallowRef(false);
 const publishing = shallowRef(false);
+const lifecyclePending = shallowRef(false);
 const ownsLock = shallowRef(false);
 const lockToken = shallowRef<string | null>(null);
 const lockMessage = shallowRef('正在连接编辑会话');
@@ -95,6 +134,58 @@ const hasFields = computed(() => {
 });
 const locales = computed(() => (definition.value ? collectFormLocales(definition.value) : []));
 const formTitle = computed(() => definition.value?.nameI18n[activeLocale.value] ?? '');
+const formDescription = computed(() => definition.value?.descriptionI18n?.[activeLocale.value] ?? '');
+const closingMessage = computed(() => (
+  definition.value?.closingMessageI18n?.[activeLocale.value] ?? ''
+));
+const rootCapture = computed<FormCaptureSettings>(() => {
+  const root = definition.value?.schema['x-form'] as Record<string, unknown> | undefined;
+  return (root?.capture as FormCaptureSettings | undefined) ?? {};
+});
+const selectedDatasetField = computed(() => {
+  const fieldId = selectedFieldId.value;
+  if (!fieldId || !definition.value || !dataset.value) return null;
+  const schemaProperties = definition.value.schema.properties as
+    Record<string, JsonSchemaObject> | undefined;
+  const extension = schemaProperties?.[fieldId]?.['x-form'] as
+    Record<string, unknown> | undefined;
+  return dataset.value.fields.find((field) => field.id === extension?.datasetFieldId) ?? null;
+});
+const selectedChoiceOptions = computed<DatasetChoiceOption[]>(() => {
+  const field = selectedDatasetField.value;
+  if (!field) return [];
+  const draft = choiceDrafts.value[field.id];
+  if (draft) return draft;
+  try {
+    return normalizeDatasetChoiceConfig(field.kind, field.config).options;
+  } catch {
+    return [];
+  }
+});
+const selectedChoiceDirty = computed(() => Boolean(
+  selectedDatasetField.value && choiceDrafts.value[selectedDatasetField.value.id],
+));
+const editorChoiceOptions = computed<Record<string, DatasetChoiceOption[]>>(() => {
+  if (!definition.value || !dataset.value) return {};
+  try {
+    const fields = new Map(dataset.value.fields.map((field) => [field.id, field]));
+    return Object.fromEntries(parseFormSchema(definition.value.schema, { mode: 'legacy' }).items
+      .flatMap((item) => {
+        const field = fields.get(item.extension.datasetFieldId);
+        if (!field || (field.kind !== 'single_select' && field.kind !== 'multi_select')) return [];
+        const draft = choiceDrafts.value[field.id];
+        try {
+          const options = draft
+            ?? normalizeDatasetChoiceConfig(field.kind, field.config).options;
+          return [[item.id, options]];
+        } catch {
+          return [[item.id, []]];
+        }
+      }));
+  } catch {
+    return {};
+  }
+});
 const displayTitle = computed(() => (definition.value
   ? resolveLocalizedText(
     definition.value.nameI18n,
@@ -116,18 +207,18 @@ function cloneDefinition(version: FormVersionDefinition): EditableDefinition {
   }
   return {
     defaultLocale: version.defaultLocale,
-    nameI18n: structuredClone(version.nameI18n),
+    nameI18n: cloneJson(version.nameI18n),
     ...(version.descriptionI18n && {
-      descriptionI18n: structuredClone(version.descriptionI18n),
+      descriptionI18n: cloneJson(version.descriptionI18n),
     }),
     ...(version.closingMessageI18n && {
-      closingMessageI18n: structuredClone(version.closingMessageI18n),
+      closingMessageI18n: cloneJson(version.closingMessageI18n),
     }),
     ...(version.opensAt && { opensAt: version.opensAt }),
     ...(version.closesAt && { closesAt: version.closesAt }),
     submissionAccess: version.submissionAccess,
     writeMode: version.writeMode,
-    schema: structuredClone(version.schema),
+    schema: cloneJson(version.schema),
     revision: version.revision,
     schemaChecksum: version.schemaChecksum,
   };
@@ -213,6 +304,56 @@ async function releaseLock(keepalive = false): Promise<void> {
   }
 }
 
+async function refreshLifecycleDetail(): Promise<void> {
+  const loaded = await $api.get<FormPanelDetail>(apiPath('forms', `getForm/${formId.value}`));
+  detail.value = loaded;
+  if (loaded.status === 'archived') {
+    pauseHeartbeat();
+    lockToken.value = null;
+    ownsLock.value = false;
+    lockMessage.value = '已归档，只读';
+  }
+}
+
+async function changeLifecycleStatus(actionName: FormLifecycleAction): Promise<void> {
+  const current = detail.value;
+  if (!current || lifecyclePending.value) return;
+  const action = formLifecycleActions(current.status)
+    .find((candidate) => candidate.action === actionName);
+  if (!action) return;
+  const mutation = buildFormLifecycleMutation(current, actionName);
+  lifecyclePending.value = true;
+  mutationError.value = null;
+  try {
+    const updated = await $api.post<FormSummary>(
+      apiPath('forms', mutation.endpoint),
+      mutation.payload,
+    );
+    detail.value = mergeFormLifecycleSummary(current, updated);
+    if (updated.status === 'archived') {
+      pauseHeartbeat();
+      lockToken.value = null;
+      ownsLock.value = false;
+      lockMessage.value = '已归档，只读';
+    } else if (current.status === 'archived') {
+      await initializeEditor();
+    }
+    toast.add({ title: `表单已${action.label}` });
+  } catch (error) {
+    const apiError = toApiError(error);
+    if (apiError.httpStatus === 409) {
+      try {
+        await refreshLifecycleDetail();
+      } catch {
+        // 保留本地草稿；下一次正常页面载入会重新获取权威状态。
+      }
+    }
+    mutationError.value = apiError.message;
+  } finally {
+    lifecyclePending.value = false;
+  }
+}
+
 function onBeforeWindowUnload(): void {
   releaseLock(true).catch(() => undefined);
 }
@@ -234,67 +375,101 @@ function properties(): Record<string, JsonSchemaObject> {
 }
 
 function addWidget(widgetName: string): void {
-  const widget = formWidgetDefinitions.find((entry) => entry.widget === widgetName);
-  if (!widget || !definition.value) return;
-  markMutation(() => {
-    const fieldId = createFormItemId();
-    const entries = Object.entries(properties());
-    const selectedIndex = entries.findIndex(([id]) => id === selectedFieldId.value);
-    entries.splice(selectedIndex < 0 ? entries.length : selectedIndex + 1, 0, [
-      fieldId,
-      createWidgetProperty(
-        widget.widget as FormWidgetDefinition['widget'],
+  if (!definition.value || !dataset.value) return;
+  try {
+    const template = getFormItemTemplate(widgetName as FormWidget);
+    const usedFieldIds = new Set(Object.values(properties()).map((property) => {
+      const extension = property['x-form'] as Record<string, unknown> | undefined;
+      return extension?.datasetFieldId;
+    }));
+    const field = dataset.value.fields.find((candidate) => (
+      !candidate.archivedAt && template.accepts(candidate) && !usedFieldIds.has(candidate.id)
+    ));
+    markMutation(() => {
+      const result = appendFormItem(
+        definition.value!.schema,
+        template,
+        field,
         activeLocale.value,
-        widget.label,
-      ),
-    ]);
-    definition.value!.schema.properties = Object.fromEntries(entries);
-    selectedFieldId.value = fieldId;
-  });
+        selectedFieldId.value,
+      );
+      definition.value!.schema = result.schema;
+      selectedFieldId.value = result.fieldId;
+    });
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 function moveField(fieldId: string, offset: -1 | 1): void {
   markMutation(() => {
-    const entries = Object.entries(properties());
-    const from = entries.findIndex(([id]) => id === fieldId);
-    const to = from + offset;
-    if (from < 0 || to < 0 || to >= entries.length) return;
-    const [entry] = entries.splice(from, 1);
-    if (entry) entries.splice(to, 0, entry);
-    definition.value!.schema.properties = Object.fromEntries(entries);
+    definition.value!.schema = moveFormItem(definition.value!.schema, fieldId, offset);
   });
 }
 
 function duplicateField(fieldId: string): void {
-  markMutation(() => {
-    const entries = Object.entries(properties());
-    const index = entries.findIndex(([id]) => id === fieldId);
-    if (index < 0) return;
-    const source = entries[index]?.[1];
-    if (!source) return;
-    const nextId = createFormItemId();
-    const cloned = structuredClone(source);
-    entries.splice(index + 1, 0, [nextId, cloned]);
-    definition.value!.schema.properties = Object.fromEntries(entries);
-    selectedFieldId.value = nextId;
-  });
+  try {
+    markMutation(() => {
+      const result = duplicateFormItem(definition.value!.schema, fieldId);
+      definition.value!.schema = result.schema;
+      selectedFieldId.value = result.fieldId;
+    });
+    mutationError.value = '副本尚未绑定数据集字段，完成绑定后才能保存。';
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 function deleteField(fieldId: string): void {
+  const result = deleteFormItem(definition.value!.schema, fieldId);
+  if (result.references.length > 0) {
+    mutationError.value = `该项仍被 ${result.references.join('、')} 的条件或关联筛选引用，无法删除。`;
+    return;
+  }
   markMutation(() => {
-    const next = { ...properties() };
-    delete next[fieldId];
-    definition.value!.schema.properties = next;
-    if (Array.isArray(definition.value!.schema.required)) {
-      definition.value!.schema.required = definition.value!.schema.required
-        .filter((id) => id !== fieldId);
-    }
-    selectedFieldId.value = Object.keys(next)[0] ?? null;
+    definition.value!.schema = result.schema;
+    selectedFieldId.value = result.selectedFieldId;
   });
 }
 
 function updateFormTitle(value: string): void {
   markMutation(() => setFormTitle(definition.value!, activeLocale.value, value));
+}
+
+function updateDefaultLocale(locale: string): void {
+  markMutation(() => setFormDefaultLocale(definition.value!, locale));
+  activeLocale.value = locale;
+}
+
+function updateFormLocalizedMetadata(
+  key: 'closingMessageI18n' | 'descriptionI18n',
+  value: string,
+): void {
+  markMutation(() => setFormLocalizedMetadata(definition.value!, key, activeLocale.value, value));
+}
+
+function updateWindow(key: 'closesAt' | 'opensAt', value?: string): void {
+  markMutation(() => {
+    if (!value) delete definition.value![key];
+    else definition.value![key] = new Date(value).toISOString();
+  });
+}
+
+function updateSubmissionAccess(value: FormSubmissionAccess): void {
+  markMutation(() => { definition.value!.submissionAccess = value; });
+}
+
+function updateWriteMode(value: FormWriteMode): void {
+  markMutation(() => { definition.value!.writeMode = value; });
+}
+
+function updateCapture(key: keyof FormCaptureSettings, enabled: boolean): void {
+  markMutation(() => {
+    const root = definition.value!.schema['x-form'] as Record<string, unknown>;
+    const capture = (root.capture ??= {}) as Record<string, unknown>;
+    if (enabled) capture[key] = { datasetFieldId: 'managed' };
+    else delete capture[key];
+  });
 }
 
 function updateFieldText(key: 'description' | 'placeholder' | 'title', value: string): void {
@@ -309,25 +484,66 @@ function updateFieldText(key: 'description' | 'placeholder' | 'title', value: st
   ));
 }
 
-function updateChoiceTitle(index: number, value: string): void {
+function updateRequired(value: boolean): void {
   const fieldId = selectedFieldId.value;
   if (!fieldId) return;
-  markMutation(() => setChoiceLocalizedTitle(
-    definition.value!.schema,
-    fieldId,
-    index,
-    activeLocale.value,
-    value,
-  ));
+  markMutation(() => setFormItemRequired(definition.value!.schema, fieldId, value));
+}
+
+function updateConstraint(key: FormConstraintKey, value: JsonValue | undefined): void {
+  const fieldId = selectedFieldId.value;
+  if (!fieldId) return;
+  markMutation(() => setFormItemConstraint(definition.value!.schema, fieldId, key, value));
+}
+
+function updateDefault(value: JsonValue | undefined): void {
+  const fieldId = selectedFieldId.value;
+  if (!fieldId) return;
+  markMutation(() => setFormItemDefault(definition.value!.schema, fieldId, value));
+}
+
+function updateAvailableIf(value: AvailableIfExpression | undefined): void {
+  const fieldId = selectedFieldId.value;
+  if (!fieldId) return;
+  const next = cloneJson(definition.value!.schema);
+  setFormItemAvailableIf(next, fieldId, value);
+  try {
+    parseFormSchema(next, { mode: 'strict' });
+    markMutation(() => { definition.value!.schema = next; });
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function updateRelationOptions(value: FormItemUiOptions | undefined): void {
+  const fieldId = selectedFieldId.value;
+  if (!fieldId) return;
+  const next = cloneJson(definition.value!.schema);
+  setFormItemRelationOptions(next, fieldId, value);
+  try {
+    parseFormSchema(next, { mode: 'strict' });
+    markMutation(() => { definition.value!.schema = next; });
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 function updateDatasetFieldId(value: string): void {
   const fieldId = selectedFieldId.value;
-  if (!fieldId) return;
-  markMutation(() => {
-    const extension = properties()[fieldId]?.['x-form'] as Record<string, unknown> | undefined;
-    if (extension) extension.datasetFieldId = value;
-  });
+  const field = dataset.value?.fields.find((candidate) => candidate.id === value);
+  if (!fieldId || !field) return;
+  try {
+    markMutation(() => {
+      definition.value!.schema = rebindFormItem(
+        definition.value!.schema,
+        fieldId,
+        field,
+        activeLocale.value,
+      );
+    });
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 function addLocale(locale: string): void {
@@ -341,11 +557,57 @@ async function createDatasetField(request: CreateDatasetPanelFieldRequest): Prom
       apiPath('datasets', 'createDatasetField'),
       request,
     );
-    if (dataset.value) dataset.value.fields = [...dataset.value.fields, field];
+    if (dataset.value) {
+      dataset.value = await $api.get<DatasetPanelDetail>(
+        apiPath('datasets', `getDataset/${dataset.value.id}`),
+      );
+    }
     updateDatasetFieldId(field.id);
     toast.add({ title: '数据集字段已创建并绑定' });
   } catch (error) {
     mutationError.value = toApiError(error).message;
+  }
+}
+
+function updateChoiceOptions(options: DatasetChoiceOption[]): void {
+  const field = selectedDatasetField.value;
+  if (!field) return;
+  choiceDrafts.value = { ...choiceDrafts.value, [field.id]: cloneJson(options) };
+  choiceError.value = null;
+}
+
+async function saveChoiceOptions(): Promise<void> {
+  const field = selectedDatasetField.value;
+  const currentDataset = dataset.value;
+  const options = field ? choiceDrafts.value[field.id] : undefined;
+  if (!field || !currentDataset || !options) return;
+  choiceSaving.value = true;
+  choiceError.value = null;
+  try {
+    const result = await $api.patch<DatasetFieldMutationResponse>(
+      `/workspaces/${workspaceId.value}/datasets/${currentDataset.id}/fields/${field.id}`,
+      buildChoiceUpdateRequest(currentDataset, field, options),
+    );
+    dataset.value = applyChoiceMutationResult(currentDataset, result);
+    choiceDrafts.value = settleChoiceDrafts(choiceDrafts.value, field.id, 'success');
+    toast.add({ title: 'Dataset 选项已更新', color: 'success' });
+  } catch (error) {
+    const apiError = toApiError(error);
+    choiceError.value = apiError.httpStatus === 409
+      ? 'Dataset 已被其他人更新；本地选项草稿已保留，请对照最新配置后再次保存。'
+      : apiError.message;
+    choiceDrafts.value = settleChoiceDrafts(choiceDrafts.value, field.id, 'conflict');
+    if (apiError.httpStatus === 409 && currentDataset) {
+      try {
+        dataset.value = await $api.get<DatasetPanelDetail>(
+          apiPath('datasets', `getDataset/${currentDataset.id}`),
+        );
+      } catch {
+        // 保留当前权威快照和本地 choice draft，等待用户重试。
+      }
+    }
+  } finally {
+    choiceSaving.value = false;
   }
 }
 
@@ -376,6 +638,12 @@ function savePayload(schemaOverride?: JsonSchemaObject): FormDraftDefinitionInpu
 
 async function saveDraft(schemaOverride?: JsonSchemaObject): Promise<boolean> {
   if (mutationsDisabled.value || !definition.value) return false;
+  try {
+    validateFormEditorSchema(schemaOverride ?? definition.value.schema, dataset.value);
+  } catch (error) {
+    mutationError.value = error instanceof Error ? error.message : String(error);
+    return false;
+  }
   saving.value = true;
   mutationError.value = null;
   try {
@@ -473,6 +741,28 @@ watch(sourceOpen, async (open) => {
   }
 });
 
+let relationDatasetRequest = 0;
+watch(
+  () => selectedDatasetField.value?.relationTargetDatasetId,
+  async (targetDatasetId) => {
+    relationDatasetRequest += 1;
+    const requestId = relationDatasetRequest;
+    relationDataset.value = null;
+    if (!targetDatasetId) return;
+    try {
+      const loaded = await $api.get<DatasetPanelDetail>(
+        apiPath('datasets', `getDataset/${targetDatasetId}`),
+      );
+      if (requestId === relationDatasetRequest) relationDataset.value = loaded;
+    } catch (error) {
+      if (requestId === relationDatasetRequest) {
+        choiceError.value = `无法读取关联目标字段：${toApiError(error).message}`;
+      }
+    }
+  },
+  { immediate: true },
+);
+
 async function validateAndSaveSource(): Promise<void> {
   sourceError.value = null;
   let parsed: JsonSchemaObject;
@@ -518,10 +808,13 @@ onBeforeUnmount(() => {
       :lock-label="lockMessage"
       :saving="saving"
       :publishing="publishing"
+      :lifecycle-pending="lifecyclePending"
+      :status="detail?.status"
       @back="router.push('/panel/form')"
       @source="openSource"
       @save="saveDraft()"
       @publish="publishForm"
+      @lifecycle="changeLifecycleStatus"
     />
 
     <div
@@ -608,6 +901,7 @@ onBeforeUnmount(() => {
               :schema="schema"
               :locale="activeLocale"
               :default-locale="definition.defaultLocale"
+              :choice-options="editorChoiceOptions"
               mode="edit"
               @up="moveField($event, -1)"
               @down="moveField($event, 1)"
@@ -636,19 +930,45 @@ onBeforeUnmount(() => {
           :default-locale="definition.defaultLocale"
           :locales="locales"
           :form-title="formTitle"
+          :description="formDescription"
+          :closing-message="closingMessage"
+          :opens-at="definition.opensAt"
+          :closes-at="definition.closesAt"
+          :submission-access="definition.submissionAccess"
+          :write-mode="definition.writeMode"
+          :capture="rootCapture"
           :schema="schema"
           :dataset="dataset"
+          :relation-dataset="relationDataset"
           :selected-field-id="selectedFieldId"
+          :choice-options="selectedChoiceOptions"
+          :choice-dirty="selectedChoiceDirty"
+          :choice-saving="choiceSaving"
+          :choice-error="choiceError"
           :disabled="mutationsDisabled"
           @update:active-locale="activeLocale = $event"
+          @update:default-locale="updateDefaultLocale"
           @update:form-title="updateFormTitle"
+          @update:description="updateFormLocalizedMetadata('descriptionI18n', $event)"
+          @update:closing-message="updateFormLocalizedMetadata('closingMessageI18n', $event)"
+          @update:opens-at="updateWindow('opensAt', $event)"
+          @update:closes-at="updateWindow('closesAt', $event)"
+          @update:submission-access="updateSubmissionAccess"
+          @update:write-mode="updateWriteMode"
+          @update:capture="updateCapture"
           @update:field-title="updateFieldText('title', $event)"
           @update:field-description="updateFieldText('description', $event)"
           @update:field-placeholder="updateFieldText('placeholder', $event)"
           @update:dataset-field-id="updateDatasetFieldId"
-          @update:choice-title="updateChoiceTitle"
+          @update:required="updateRequired"
+          @update:constraint="updateConstraint"
+          @update:default="updateDefault"
+          @update:available-if="updateAvailableIf"
+          @update:relation-options="updateRelationOptions"
+          @update:choice-options="updateChoiceOptions"
           @add-locale="addLocale"
           @create-field="createDatasetField"
+          @save-choices="saveChoiceOptions"
         />
       </aside>
     </div>

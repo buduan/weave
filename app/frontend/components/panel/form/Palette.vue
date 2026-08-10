@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* eslint-disable vue/valid-v-for -- Palette keys use widget registry names */
-import { formWidgetDefinitions } from '~/components/form/component-map';
+import { formItemTemplates } from '~/utils/form-templates/registry';
 
 withDefaults(defineProps<{
   disabled?: boolean;
@@ -25,7 +25,7 @@ const emit = defineEmits<{
     </div>
     <div class="flex flex-col gap-2">
       <UButton
-        v-for="widget in formWidgetDefinitions"
+        v-for="widget in formItemTemplates"
         :key="widget.widget"
         :label="widget.label"
         :icon="widget.icon"

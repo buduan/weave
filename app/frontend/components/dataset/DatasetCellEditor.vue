@@ -2,9 +2,11 @@
 import type { DatasetFieldDefinition, JsonValue } from '@weave/types';
 import { useDocumentVisibility, watchDebounced } from '@vueuse/core';
 import { computed, shallowRef, watch } from '#imports';
-import { parseDatasetFieldInputValue } from '@weave/utils';
+import { normalizeDatasetChoiceConfig, parseDatasetFieldInputValue } from '@weave/utils';
 import { getDatasetCellFinalizeActions } from './dataset-cell';
 import { getDatasetFieldOptions } from './dataset-query';
+import FormItemsCascader from '../form/items/Cascader.vue';
+import { toFormItemOptions } from '../form/items/types';
 import type {
   DatasetCellDraftState,
   DatasetOption,
@@ -52,14 +54,26 @@ const options = computed(() => getDatasetFieldOptions(
   props.field,
   props.relationOptions,
 ));
+const cascaderConfig = computed(() => {
+  if (props.field.kind !== 'multi_select') return null;
+  try {
+    const config = normalizeDatasetChoiceConfig(props.field.kind, props.field.config);
+    return config.optionMode === 'cascader'
+      ? { ...config, options: toFormItemOptions(config.options) }
+      : null;
+  } catch {
+    return null;
+  }
+});
 const isMultiple = computed(() => props.field.kind === 'multi_select'
   || (props.field.kind === 'relation' && props.field.relationCardinality === 'many'));
 const isSelectEditor = computed(() => props.field.kind === 'single_select'
-  || props.field.kind === 'multi_select'
+  || (props.field.kind === 'multi_select' && !cascaderConfig.value)
   || props.field.kind === 'relation');
 const selectDraft = computed<string | string[]>(() => (Array.isArray(draft.value)
   ? draft.value
   : String(draft.value)));
+const cascaderDraft = computed<string[]>(() => (Array.isArray(draft.value) ? draft.value : []));
 const inputType = computed(() => {
   if (props.field.kind === 'number') return 'number';
   if (props.field.kind === 'date') return 'date';
@@ -185,6 +199,18 @@ watch(() => props.relationOptionState?.forbidden, (forbidden) => {
       class="px-2"
       @update:model-value="updateDraft"
       @blur="handleBlur"
+      @keydown.enter.stop.prevent="finalize"
+    />
+
+    <FormItemsCascader
+      v-else-if="cascaderConfig"
+      :model-value="cascaderDraft"
+      :items="cascaderConfig.options"
+      :required="field.required"
+      autofocus
+      class="w-full"
+      aria-label="编辑单元格"
+      @update:model-value="updateDraft"
       @keydown.enter.stop.prevent="finalize"
     />
 

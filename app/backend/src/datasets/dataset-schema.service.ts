@@ -3,6 +3,13 @@ import type { DatasetField, Prisma } from '@prisma/client';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
+import type { DatasetChoiceOption, JsonSchema } from '@weave/types';
+import {
+  isCompleteChoicePath,
+  normalizeDatasetChoiceConfig,
+  stripChoiceMembershipSchema,
+} from '@weave/utils';
+
 interface RowInput {
   relations: Record<string, unknown>;
   values: Record<string, unknown>;
@@ -86,12 +93,27 @@ export class DatasetSchemaService {
         throw new BadRequestException(`Relation field must be supplied under relations: ${fieldId}`);
       }
       this.assertJsonValue(value, `values.${fieldId}`);
-      const validate = this.ajv.compile(field.valueSchema as object);
+      const choiceConfig = field.kind === 'single_select' || field.kind === 'multi_select'
+        ? this.parseChoiceConfig(field.kind, field.config, fieldId)
+        : null;
+      const valueSchema = choiceConfig?.hasOptions
+        ? stripChoiceMembershipSchema(field.valueSchema as JsonSchema)
+        : field.valueSchema;
+      const validate = this.ajv.compile(valueSchema as object);
       if (!validate(value)) {
         throw new BadRequestException({
           message: `Invalid value for Dataset field: ${fieldId}`,
           errors: validate.errors,
         });
+      }
+      if (choiceConfig?.hasOptions) {
+        this.validateChoiceValue(
+          fieldId,
+          field.kind as 'multi_select' | 'single_select',
+          choiceConfig.optionMode,
+          choiceConfig.options,
+          value,
+        );
       }
       resultingValues[fieldId] = value;
     });
@@ -134,6 +156,50 @@ export class DatasetSchemaService {
     }
 
     return { relations, values: resultingValues };
+  }
+
+  private parseChoiceConfig(
+    kind: 'multi_select' | 'single_select',
+    config: Prisma.JsonValue,
+    fieldId: string,
+  ): ReturnType<typeof normalizeDatasetChoiceConfig> {
+    try {
+      return normalizeDatasetChoiceConfig(kind, config);
+    } catch (error) {
+      throw new BadRequestException(
+        `Invalid choice config for Dataset field ${fieldId}: ${this.errorMessage(error)}`,
+      );
+    }
+  }
+
+  private validateChoiceValue(
+    fieldId: string,
+    kind: 'multi_select' | 'single_select',
+    optionMode: 'cascader' | 'flat',
+    options: readonly DatasetChoiceOption[],
+    value: unknown,
+  ): void {
+    if (options.length === 0) {
+      throw new BadRequestException(`Dataset field has no current choices: ${fieldId}`);
+    }
+    const acceptedValues = new Set(options.map((option) => option.value));
+    if (kind === 'single_select') {
+      if (typeof value !== 'string' || !acceptedValues.has(value)) {
+        throw new BadRequestException(`Unknown choice for Dataset field: ${fieldId}`);
+      }
+      return;
+    }
+    if (optionMode === 'cascader') {
+      if (!isCompleteChoicePath(options, value)) {
+        throw new BadRequestException(`Incomplete or unknown choice path for Dataset field: ${fieldId}`);
+      }
+      return;
+    }
+    if (!Array.isArray(value)
+      || !value.every((item) => typeof item === 'string' && acceptedValues.has(item))
+      || new Set(value).size !== value.length) {
+      throw new BadRequestException(`Invalid choices for Dataset field: ${fieldId}`);
+    }
   }
 
   /**

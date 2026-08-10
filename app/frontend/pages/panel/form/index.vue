@@ -3,11 +3,11 @@
 import type {
   CreateFormRequest,
   CreateFormResult,
-  DatasetFieldDefinition,
   DatasetPanelDetail,
   DatasetSummary,
   FormListSection,
   FormPanelSummary,
+  FormSummary,
   JsonSchemaObject,
 } from '@weave/types';
 import { createFormItemId } from '@weave/utils';
@@ -23,6 +23,14 @@ import {
   useToast,
 } from '#imports';
 import { toApiError } from '~/utils/api';
+import {
+  buildFormLifecycleMutation,
+  formLifecycleActions,
+  formStatusPresentation,
+  mergeFormLifecycleSummary,
+  type FormLifecycleAction,
+} from '~/utils/form-lifecycle';
+import { inferFormItemTemplate } from '~/utils/form-templates/registry';
 import {
   defaultFormLocale,
   detectFormLocale,
@@ -111,58 +119,24 @@ function openCreateDialog(): void {
   createOpen.value = true;
 }
 
-function widgetForField(field: DatasetFieldDefinition): string {
-  if (field.kind === 'long_text') return 'textarea';
-  if (field.kind === 'boolean') return 'checkbox';
-  if (field.kind === 'single_select') return 'radio';
-  if (field.kind === 'multi_select' || field.kind === 'relation') return 'selector';
-  return 'input';
-}
-
-function initialProperty(
-  field: DatasetFieldDefinition,
-  locale: string,
-): JsonSchemaObject {
-  const valueSchema = field.valueSchema !== null
-    && typeof field.valueSchema === 'object'
-    && !Array.isArray(field.valueSchema)
-    ? structuredClone(field.valueSchema)
-    : {};
-  const config = field.config as Record<string, unknown>;
-  const options = field.kind === 'relation' && typeof config.labelFieldId === 'string'
-    ? { labelFieldId: config.labelFieldId }
-    : undefined;
-  return {
-    ...valueSchema,
-    'x-form': {
-      datasetFieldId: field.id,
-      i18n: { title: { [locale]: field.name } },
-      ui: {
-        widget: widgetForField(field),
-        ...(options && { options }),
-      },
-    },
-  };
-}
-
 function createInitialSchema(
   dataset: DatasetPanelDetail,
   locale: string,
   title: string,
 ): JsonSchemaObject {
   const requiredFields = dataset.fields.filter((field) => field.required && !field.isSystemManaged);
-  const entries = requiredFields.map((field) => ([
+  const entries = requiredFields.map((field, position) => ([
     createFormItemId(),
-    field,
+    inferFormItemTemplate(field)?.createProperty({ datasetField: field, locale, position }),
   ] as const));
+  const supportedEntries = entries.filter(
+    (entry): entry is readonly [string, JsonSchemaObject] => Boolean(entry[1]),
+  );
   return {
     type: 'object',
     additionalProperties: false,
-    properties: Object.fromEntries(entries.map(([itemId, field]) => ([
-      itemId,
-      initialProperty(field, locale),
-    ]))),
-    required: entries.map(([itemId]) => itemId),
+    properties: Object.fromEntries(supportedEntries),
+    required: supportedEntries.map(([itemId]) => itemId),
     'x-form': {
       version: 1,
       datasetId: dataset.id,
@@ -209,20 +183,34 @@ async function createForm(): Promise<void> {
   }
 }
 
-async function changeArchiveState(form: FormPanelSummary): Promise<void> {
+async function changeLifecycleStatus(
+  form: FormPanelSummary,
+  actionName: FormLifecycleAction,
+): Promise<void> {
+  const action = formLifecycleActions(form.status)
+    .find((candidate) => candidate.action === actionName);
+  if (!action) return;
+  const mutation = buildFormLifecycleMutation(form, actionName);
   pendingFormId.value = form.id;
-  const action = form.status === 'archived' ? 'unarchiveForm' : 'archiveForm';
   try {
-    await $api.post(apiPath('forms', action), {
-      formId: form.id,
-      expectedRevision: form.revision,
-    });
-    toast.add({ title: form.status === 'archived' ? '表单已恢复' : '表单已归档' });
-    await loadForms();
+    const updated = await $api.post<FormSummary>(
+      apiPath('forms', mutation.endpoint),
+      mutation.payload,
+    );
+    forms.value = forms.value
+      .map((candidate) => (candidate.id === form.id
+        ? mergeFormLifecycleSummary(candidate, updated)
+        : candidate))
+      .filter((candidate) => (activeSection.value === 'archived'
+        ? candidate.status === 'archived'
+        : candidate.status !== 'archived'));
+    toast.add({ title: `表单已${action.label}` });
   } catch (error) {
+    const apiError = toApiError(error);
+    if (apiError.httpStatus === 409) await loadForms();
     toast.add({
       title: '操作失败',
-      description: toApiError(error).message,
+      description: apiError.message,
       color: 'error',
     });
   } finally {
@@ -413,6 +401,11 @@ onMounted(async () => {
                     color="success"
                     variant="subtle"
                   />
+                  <UBadge
+                    :label="formStatusPresentation(form.status).label"
+                    :color="formStatusPresentation(form.status).color"
+                    variant="subtle"
+                  />
                 </div>
               </td>
               <td class="px-3 py-4 text-muted">
@@ -436,14 +429,14 @@ onMounted(async () => {
                     @click="showRecordsPlaceholder"
                   />
                   <UButton
-                    :label="form.status === 'archived' ? '恢复' : '归档'"
-                    :icon="form.status === 'archived'
-                      ? 'i-solar-restart-bold-duotone'
-                      : 'i-solar-archive-bold-duotone'"
+                    v-for="action in formLifecycleActions(form.status)"
+                    :key="action.action"
+                    :label="action.label"
+                    :icon="action.icon"
                     color="neutral"
                     variant="ghost"
                     :loading="pendingFormId === form.id"
-                    @click="changeArchiveState(form)"
+                    @click="changeLifecycleStatus(form, action.action)"
                   />
                 </div>
               </td>

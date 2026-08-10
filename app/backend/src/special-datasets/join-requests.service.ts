@@ -16,6 +16,7 @@ import {
 import type { AuthenticatedActor } from '@weave/types';
 
 import { AuditService } from '../audit/audit.service';
+import { lockDatasetParent } from '../common/aggregate-locks';
 import { RelationValidationService } from '../common/relation-validation.service';
 import { createRowVersion } from '../common/row-version.factory';
 import { DatasetSchemaService } from '../datasets/dataset-schema.service';
@@ -57,44 +58,50 @@ export class JoinRequestsService {
     actor: AuthenticatedActor,
   ) {
     this.assertWorkspace(workspaceId, actor);
-    const [dataset, member, fields] = await Promise.all([
-      this.prisma.dataset.findUnique({ where: { workspaceId_id: { workspaceId, id: datasetId } } }),
-      this.prisma.workspaceMember.findUnique({
-        where: { workspaceId_userId: { workspaceId, userId: actor.userId } },
-        include: { memberType: true, user: true },
-      }),
-      this.prisma.datasetField.findMany({ where: { datasetId } }),
-    ]);
-    if (!dataset || dataset.type !== DatasetType.join_requests) {
-      throw new NotFoundException('Join Requests Dataset not found');
-    }
-    if (dataset.status !== DatasetStatus.active) throw new ConflictException('Dataset is archived');
-    if (!member || member.memberType.slug !== 'guest') {
-      throw new ForbiddenException('Only authenticated guest members may apply');
-    }
-
-    // 校验用户提交的字段值。
-    const validated = this.schemas.validateRow(fields, dto);
-    await this.relationValidation.validate(workspaceId, fields, validated.relations);
-
-    // 定位系统身份字段。
-    const systemFields = new Map(fields.map((field) => [field.systemKey, field.id]));
-    const nameFieldId = systemFields.get('applicant_name');
-    const emailFieldId = systemFields.get('applicant_email');
-    if (!nameFieldId || !emailFieldId) {
-      throw new ConflictException('Join Request identity fields are not initialized');
-    }
-
-    // 合并用户提交值和系统写入的身份字段（服务端权威，不信任客户端）。
-    const values: Prisma.InputJsonObject = {
-      ...validated.values,
-      [nameFieldId]: member.user.name,
-      [emailFieldId]: member.user.email,
-    };
-
     try {
       // Serializable 隔离级别防止并发创建重复申请行。
       const transactionResult = await this.prisma.$transaction(async (tx) => {
+        await lockDatasetParent(tx, datasetId, 'share');
+        const [dataset, member, fields] = await Promise.all([
+          tx.dataset.findUnique({ where: { workspaceId_id: { workspaceId, id: datasetId } } }),
+          tx.workspaceMember.findUnique({
+            where: { workspaceId_userId: { workspaceId, userId: actor.userId } },
+            include: { memberType: true, user: true },
+          }),
+          tx.datasetField.findMany({ where: { datasetId } }),
+        ]);
+        if (!dataset || dataset.type !== DatasetType.join_requests) {
+          throw new NotFoundException('Join Requests Dataset not found');
+        }
+        if (dataset.status !== DatasetStatus.active) {
+          throw new ConflictException('Dataset is archived');
+        }
+        if (!member || member.memberType.slug !== 'guest') {
+          throw new ForbiddenException('Only authenticated guest members may apply');
+        }
+        const validated = this.schemas.validateRow(fields, dto);
+        const initialSubject = await tx.datasetRowSubject.findUnique({
+          where: { datasetId_userId: { datasetId, userId: actor.userId } },
+          select: { rowId: true },
+        });
+        await this.relationValidation.validate(
+          tx,
+          workspaceId,
+          fields,
+          validated.relations,
+          { updateRowIds: initialSubject ? [initialSubject.rowId] : [] },
+        );
+        const systemFields = new Map(fields.map((field) => [field.systemKey, field.id]));
+        const nameFieldId = systemFields.get('applicant_name');
+        const emailFieldId = systemFields.get('applicant_email');
+        if (!nameFieldId || !emailFieldId) {
+          throw new ConflictException('Join Request identity fields are not initialized');
+        }
+        const values: Prisma.InputJsonObject = {
+          ...validated.values,
+          [nameFieldId]: member.user.name,
+          [emailFieldId]: member.user.email,
+        };
         const subject = await tx.datasetRowSubject.findUnique({
           where: { datasetId_userId: { datasetId, userId: actor.userId } },
           include: { row: { include: { joinRequest: true } } },

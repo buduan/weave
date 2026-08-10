@@ -12,6 +12,7 @@ import {
   FormVersionState,
   FormWriteMode,
 } from '@prisma/client';
+import type { Sql } from '@prisma/client/runtime/library';
 import {
   describe,
   expect,
@@ -69,6 +70,49 @@ function form(access = FormSubmissionAccess.anonymous_allowed) {
   };
 }
 
+function currentFields() {
+  return [
+    {
+      id: 'field-a',
+      datasetId: 'dataset-1',
+      kind: 'single_select',
+      valueSchema: { type: 'string', enum: ['yes', 'no'] },
+      config: {},
+      archivedAt: null,
+      isSystemManaged: false,
+      systemKey: null,
+      relationCardinality: null,
+      relationTargetDatasetId: null,
+    },
+    {
+      id: 'field-b',
+      datasetId: 'dataset-1',
+      kind: 'text',
+      valueSchema: { type: 'string' },
+      config: {},
+      archivedAt: null,
+      isSystemManaged: false,
+      systemKey: null,
+      relationCardinality: null,
+      relationTargetDatasetId: null,
+    },
+  ];
+}
+
+function validationPrisma(record = form()) {
+  const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    form: { findUnique: vi.fn().mockResolvedValue(record) },
+    formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
+    datasetField: { findMany: vi.fn().mockResolvedValue(currentFields()) },
+  };
+  return {
+    form: { findUnique: vi.fn().mockResolvedValue(record) },
+    formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
+    $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+  };
+}
+
 function service(prisma: object, overrides: {
   audit?: object;
   rateLimit?: object;
@@ -87,22 +131,14 @@ function service(prisma: object, overrides: {
 
 describe('Form submission validation and idempotency', () => {
   it('rejects anonymous access before processing answers when authentication is required', async () => {
-    const prisma = {
-      form: {
-        findUnique: vi.fn().mockResolvedValue(
-          form(FormSubmissionAccess.authentication_required),
-        ),
-      },
-    };
+    const prisma = validationPrisma(form(FormSubmissionAccess.authentication_required));
 
     await expect(service(prisma).submitByPublicId('form-1', { answers: {} }, undefined, null, {}))
       .rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('enforces conditional required fields and rejects unknown properties', async () => {
-    const prisma = {
-      form: { findUnique: vi.fn().mockResolvedValue(form()) },
-    };
+    const prisma = validationPrisma();
     const submissions = service(prisma);
 
     await expect(submissions.submitByPublicId('form-1', {
@@ -152,7 +188,7 @@ describe('Form submission validation and idempotency', () => {
       datasetFieldId: 'field-b',
       availableIf: { fieldId: itemA, operator: 'equals', value: 'yes' },
     };
-    const prisma = { form: { findUnique: vi.fn().mockResolvedValue(record) } };
+    const prisma = validationPrisma(record);
 
     await expect(service(prisma).submitByPublicId('form-1', {
       answers: { [itemA]: 'no', [itemB]: 'injected' },
@@ -160,13 +196,127 @@ describe('Form submission validation and idempotency', () => {
       .rejects.toThrow('Form answers contain unavailable items');
   });
 
+  it('rejects a direct relation target that bypasses the authoritative Form filter', async () => {
+    const countryItemId = itemA;
+    const relationItemId = itemB;
+    const record = form();
+    record.activeVersion.schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [countryItemId]: {
+          type: 'string',
+          'x-form': { datasetFieldId: 'field-country-source', position: 0 },
+        },
+        [relationItemId]: {
+          type: 'string',
+          'x-form': {
+            datasetFieldId: 'field-city',
+            position: 1,
+            ui: {
+              widget: 'selector',
+              options: {
+                labelFieldId: 'field-label',
+                filter: {
+                  all: [{
+                    fieldId: 'field-country',
+                    operator: 'equals',
+                    valueFrom: countryItemId,
+                  }],
+                },
+              },
+            },
+          },
+        },
+      },
+      required: [countryItemId, relationItemId],
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+    const fields = [
+      {
+        ...currentFields()[1],
+        id: 'field-country-source',
+      },
+      {
+        ...currentFields()[1],
+        id: 'field-city',
+        kind: 'relation',
+        relationCardinality: 'one',
+        relationTargetDatasetId: 'dataset-cities',
+      },
+    ];
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+      },
+      datasetField: { findMany: vi.fn().mockResolvedValue(fields) },
+      datasetRow: { create: vi.fn() },
+      datasetRowSubject: { findUnique: vi.fn() },
+    };
+    const prisma = {
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const schemas = {
+      validateRow: vi.fn().mockReturnValue({
+        values: { 'field-country-source': 'CN' },
+        relations: new Map([['field-city', ['row-paris']]]),
+      }),
+    };
+    const relationValidation = {
+      validate: vi.fn().mockResolvedValue([{
+        id: 'row-paris',
+        workspaceId: 1,
+        datasetId: 'dataset-cities',
+        deletedAt: null,
+        values: { 'field-country': 'FR', 'field-label': 'Paris' },
+      }]),
+    };
+    const audit = { record: vi.fn() };
+
+    await expect(service(prisma, {
+      audit,
+      relationValidation,
+      schemas,
+    }).submitByPublicId('form-1', {
+      answers: { [countryItemId]: 'CN', [relationItemId]: 'row-paris' },
+    }, undefined, null, { networkIdentity: '127.0.0.1' }))
+      .rejects.toThrow('Relation target does not satisfy the Form filter');
+
+    expect(relationValidation.validate).toHaveBeenCalledWith(
+      tx,
+      1,
+      fields,
+      new Map([['field-city', ['row-paris']]]),
+      { updateRowIds: [] },
+    );
+    expect(tx.datasetRow.create).not.toHaveBeenCalled();
+    expect(tx.formSubmission.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
   it('returns a minimal public result, records the actor, and captures User-Agent metadata', async () => {
+    const events: string[] = [];
     const submittedAt = new Date('2026-08-08T08:00:00.000Z');
     const record = form();
     record.activeVersion.schema['x-form'].capture = {
       userAgent: { datasetFieldId: 'field-user-agent' },
     };
     const tx = {
+      $queryRaw: vi.fn((query: Sql) => {
+        events.push(query.strings.join('').includes('Dataset"') ? 'dataset-lock' : 'form-lock');
+        return [];
+      }),
+      form: {
+        findUnique: vi.fn().mockImplementation(() => {
+          events.push('form-read');
+          return record;
+        }),
+      },
       formSubmission: {
         findUnique: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({
@@ -181,6 +331,13 @@ describe('Form submission validation and idempotency', () => {
           submittedAt,
         }),
       },
+      datasetField: {
+        findMany: vi.fn().mockImplementation(() => {
+          events.push('field-read');
+          return currentFields();
+        }),
+      },
+      datasetRowSubject: { findUnique: vi.fn().mockResolvedValue(null) },
       datasetRow: { create: vi.fn().mockResolvedValue({ id: 'row-created', revision: 1 }) },
       datasetRelation: { createMany: vi.fn() },
       datasetRowVersion: { create: vi.fn().mockResolvedValue({ id: 'row-version-created' }) },
@@ -188,12 +345,6 @@ describe('Form submission validation and idempotency', () => {
     const prisma = {
       form: { findUnique: vi.fn().mockResolvedValue(record) },
       formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
-      datasetField: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: 'field-a', kind: 'single_select', relationTargetDatasetId: null },
-          { id: 'field-b', kind: 'text', relationTargetDatasetId: null },
-        ]),
-      },
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     const schemas = {
@@ -203,7 +354,7 @@ describe('Form submission validation and idempotency', () => {
       })),
     };
     const audit = { record: vi.fn() };
-    const relationValidation = { validate: vi.fn() };
+    const relationValidation = { validate: vi.fn().mockResolvedValue([]) };
     const rateLimit = { consume: vi.fn() };
     const actor = {
       userId: 'user-1',
@@ -245,6 +396,14 @@ describe('Form submission validation and idempotency', () => {
       action: 'form.submit',
       result: 'success',
     }), tx);
+    expect(events.slice(0, 4)).toEqual([
+      'dataset-lock',
+      'form-lock',
+      'form-read',
+      'field-read',
+    ]);
+    const queries = tx.$queryRaw.mock.calls.map(([query]) => query as Sql);
+    expect(queries.every((query) => query.strings.join('').includes('FOR SHARE'))).toBe(true);
   });
 
   it('rejects a new write when the public rate limiter denies it', async () => {
@@ -332,6 +491,8 @@ describe('Subject-row filling and update', () => {
       [itemA]: { type: 'string', 'x-form': { datasetFieldId: 'field-a' } },
     };
     const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
       formSubmission: {
         findUnique: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({
@@ -356,17 +517,17 @@ describe('Subject-row filling and update', () => {
         updateMany: vi.fn().mockResolvedValue({ count }),
         findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'row-1', revision: 2 }),
       },
-      datasetField: { findMany: vi.fn().mockResolvedValue([]) },
+      datasetField: {
+        findMany: vi.fn().mockResolvedValue([{
+          ...currentFields()[1],
+          id: 'field-a',
+        }]),
+      },
       datasetRelation: { deleteMany: vi.fn(), createMany: vi.fn() },
       datasetRowVersion: { create: vi.fn().mockResolvedValue({ id: 'row-version-2' }) },
     };
     const prisma = {
       form: { findUnique: vi.fn().mockResolvedValue(record) },
-      datasetField: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: 'field-a', kind: 'text', relationTargetDatasetId: null },
-        ]),
-      },
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     const schemas = {
@@ -377,7 +538,7 @@ describe('Subject-row filling and update', () => {
     };
     const dependencies = {
       audit: { record: vi.fn() },
-      relationValidation: { validate: vi.fn() },
+      relationValidation: { validate: vi.fn().mockResolvedValue([]) },
       schemas,
     };
     const promise = service(prisma, dependencies).submitByPublicId('form-1', {

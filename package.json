@@ -20,6 +20,7 @@
     "preview:frontend": "pnpm --filter @weave/frontend preview",
     "start": "docker compose -f compose.yml up --build",
     "start:db": "docker compose -f compose.dev.yml up -d",
+    "test": "pnpm --filter @weave/types build && pnpm --filter @weave/utils build && pnpm -r --if-present run test",
     "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck"
   },
   "devDependencies": {

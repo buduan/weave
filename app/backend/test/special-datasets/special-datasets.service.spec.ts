@@ -32,8 +32,87 @@ const reviewerActor: AuthenticatedActor = {
 };
 
 describe('special Dataset invariants', () => {
-  it('allows Join Requests only for guest members', async () => {
+  it('validates Join Request relations through the write transaction without a Form filter', async () => {
+    const relationField = {
+      id: 'relation-field',
+      systemKey: null,
+      relationTargetDatasetId: 'target-dataset',
+    };
+    const fields = [
+      { id: 'name-field', systemKey: 'applicant_name', relationTargetDatasetId: null },
+      { id: 'email-field', systemKey: 'applicant_email', relationTargetDatasetId: null },
+      relationField,
+    ];
+    const relations = new Map([['relation-field', ['target-row']]]);
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      dataset: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'dataset-1',
+          status: DatasetStatus.active,
+          type: DatasetType.join_requests,
+        }),
+      },
+      datasetField: { findMany: vi.fn().mockResolvedValue(fields) },
+      workspaceMember: {
+        findUnique: vi.fn().mockResolvedValue({
+          memberType: { slug: 'guest' },
+          user: { email: 'guest@example.com', name: 'Guest' },
+        }),
+      },
+      datasetRowSubject: {
+        findUnique: vi.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
+        create: vi.fn(),
+      },
+      datasetRow: {
+        create: vi.fn().mockResolvedValue({ id: 'row-1', revision: 1 }),
+      },
+      joinRequest: {
+        create: vi.fn(),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ rowId: 'row-1' }),
+      },
+      datasetRelation: { createMany: vi.fn() },
+      datasetRowVersion: { create: vi.fn() },
+    };
     const prisma = {
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const schemas = {
+      validateRow: vi.fn().mockReturnValue({ values: {}, relations }),
+    };
+    const audit = { record: vi.fn() };
+    const relationValidation = { validate: vi.fn().mockResolvedValue([]) };
+    const service = new JoinRequestsService(
+      prisma as never,
+      schemas as never,
+      {} as never,
+      audit as never,
+      relationValidation as never,
+    );
+
+    await service.submit(1, 'dataset-1', {
+      values: {},
+      relations: { 'relation-field': ['target-row'] },
+    }, actor);
+
+    expect(relationValidation.validate).toHaveBeenCalledWith(
+      tx,
+      1,
+      fields,
+      relations,
+      { updateRowIds: [] },
+    );
+    expect(tx.datasetRelation.createMany).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'join_request.submit',
+    }), tx);
+  });
+
+  it('allows Join Requests only for guest members', async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
       dataset: {
         findUnique: vi.fn().mockResolvedValue({
           id: 'dataset-1',
@@ -49,8 +128,12 @@ describe('special Dataset invariants', () => {
         }),
       },
     };
+    const prisma = {
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
     const service = new JoinRequestsService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

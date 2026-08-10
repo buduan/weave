@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from '#imports';
-import type { JsonSchema, JsonValue } from '@weave/types';
+import type {
+  DatasetChoiceOption,
+  DatasetFieldDefinition,
+  FormWidget,
+  JsonObject,
+  JsonSchema,
+  JsonSchemaObject,
+  JsonValue,
+} from '@weave/types';
 import type { FormRenderMode } from '~/components/form/types';
+import { appendFormItem } from '~/utils/form-editor-schema';
+import { getFormItemTemplate } from '~/utils/form-templates/registry';
 
 /** 固定 UUID，保证 mock schema 可重复。 */
 const ids = {
@@ -12,6 +22,7 @@ const ids = {
   bio: 'q_55555555-5555-4555-8555-555555555555',
   notifyDetail: 'q_66666666-6666-4666-8666-666666666666',
   tags: 'q_77777777-7777-4777-8777-777777777777',
+  region: 'q_88888888-8888-4888-8888-888888888888',
 } as const;
 
 const mockSchema: JsonSchema = {
@@ -19,6 +30,11 @@ const mockSchema: JsonSchema = {
   description: '由 mock JSON Schema 驱动的 FormRenderer 预览。切换下方模式观察编辑态与填写态。',
   type: 'object',
   additionalProperties: false,
+  'x-form': {
+    capture: {},
+    datasetId: 'mock-dataset',
+    version: 1,
+  },
   properties: {
     [ids.name]: {
       type: 'string',
@@ -133,12 +149,85 @@ const mockSchema: JsonSchema = {
         ui: { widget: 'tags-input' },
       },
     },
+    [ids.region]: {
+      type: 'array',
+      items: { type: 'string' },
+      'x-form': {
+        datasetFieldId: 'fld_region',
+        i18n: {
+          title: { 'zh-CN': '所属地区' },
+          placeholder: { 'zh-CN': '请选择所属地区' },
+        },
+        ui: { widget: 'cascader' },
+      },
+    },
   },
   required: [ids.name, ids.email, ids.dept],
 };
 
+const choiceOptions: Record<string, DatasetChoiceOption[]> = {
+  [ids.region]: [
+    {
+      value: 'china',
+      label: '中国',
+      children: [
+        {
+          value: 'zhejiang',
+          label: '浙江',
+          children: [{ value: 'hangzhou', label: '杭州' }],
+        },
+      ],
+    },
+  ],
+};
+
+function previewField(
+  widget: FormWidget,
+  kind: DatasetFieldDefinition['kind'],
+  valueSchema: JsonSchema,
+  config: JsonObject = {},
+): DatasetFieldDefinition {
+  return {
+    id: `preview-${widget}`,
+    datasetId: 'mock-dataset',
+    key: `preview_${widget}`,
+    name: `新增${getFormItemTemplate(widget).label}`,
+    description: null,
+    kind,
+    valueSchema,
+    config,
+    required: false,
+    isSystemManaged: false,
+    systemKey: null,
+    relationTargetDatasetId: null,
+    relationCardinality: null,
+    position: 0,
+    revision: 1,
+    archivedAt: null,
+  };
+}
+
+const previewFields: Record<FormWidget, DatasetFieldDefinition> = {
+  input: previewField('input', 'text', { type: 'string' }),
+  textarea: previewField('textarea', 'long_text', { type: 'string' }),
+  checkbox: previewField('checkbox', 'boolean', { type: 'boolean' }),
+  radio: previewField('radio', 'single_select', { type: 'string' }, {
+    optionMode: 'flat', options: [{ value: 'one', label: '选项一' }],
+  }),
+  selector: previewField('selector', 'multi_select', {
+    type: 'array', items: { type: 'string' },
+  }, { optionMode: 'flat', options: [{ value: 'one', label: '选项一' }] }),
+  cascader: previewField('cascader', 'multi_select', {
+    type: 'array', items: { type: 'string' },
+  }, { optionMode: 'cascader', options: [] }),
+  'tags-input': previewField('tags-input', 'multi_select', {
+    type: 'array', items: { type: 'string' },
+  }),
+};
+
 const isEditMode = ref(true);
 const mode = computed<FormRenderMode>(() => (isEditMode.value ? 'edit' : 'fill'));
+const previewSchema = ref<JsonSchemaObject>(mockSchema as JsonSchemaObject);
 const state = ref<Record<string, JsonValue | undefined>>({});
 const selectedFieldId = ref<string | null>(null);
 
@@ -150,6 +239,20 @@ const lastAction = ref<string>('无');
 
 function onFieldAction(action: string, fieldId: string): void {
   lastAction.value = `${action} → ${fieldId}`;
+}
+
+function addPreviewItem(widget: string): void {
+  const template = getFormItemTemplate(widget as FormWidget);
+  const added = appendFormItem(
+    previewSchema.value,
+    template,
+    previewFields[template.widget],
+    'zh-CN',
+    selectedFieldId.value,
+  );
+  previewSchema.value = added.schema;
+  selectedFieldId.value = added.fieldId;
+  lastAction.value = `add:${widget} → ${added.fieldId}`;
 }
 </script>
 
@@ -222,10 +325,15 @@ function onFieldAction(action: string, fieldId: string): void {
         </div>
       </header>
 
+      <section class="mb-6 rounded-2xl border border-default bg-elevated">
+        <PanelFormPalette @add="addPreviewItem" />
+      </section>
+
       <FormRenderer
         v-model="state"
         v-model:selected-field-id="selectedFieldId"
-        :schema="mockSchema"
+        :schema="previewSchema"
+        :choice-options="choiceOptions"
         :mode="mode"
         class="rounded-2xl border border-default bg-elevated p-4 sm:p-6"
         @up="onFieldAction('up', $event)"

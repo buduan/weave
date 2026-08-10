@@ -6,11 +6,13 @@ import {
   FormSubmissionAccess,
   FormWriteMode,
 } from '@prisma/client';
-import Ajv2020 from 'ajv/dist/2020';
-import addFormats from 'ajv-formats';
-
 import type { JsonSchema } from '@weave/types';
-import { validateFormSchemaExtensions } from '@weave/utils';
+import {
+  createFormAjv,
+  evaluateFormAnswers,
+  parseFormSchema,
+  projectCurrentFormFields,
+} from '@weave/utils';
 
 /** Form 定义发布时的完整校验上下文。 */
 interface DefinitionContext {
@@ -22,13 +24,16 @@ interface DefinitionContext {
   /** 包含当前 Dataset 及其关系目标 Dataset 的全部字段。 */
   fields: Array<{
     archivedAt: Date | null;
+    config: unknown;
     datasetId: string;
     id: string;
     isSystemManaged: boolean;
     kind: DatasetFieldKind;
     relationTargetDatasetId: string | null;
+    relationCardinality: 'many' | 'one' | null;
     required: boolean;
     systemKey: string | null;
+    valueSchema: unknown;
   }>;
   submissionAccess: FormSubmissionAccess;
   /** 关系目标 Dataset 列表，用于校验关联选项的安全策略。 */
@@ -43,15 +48,10 @@ interface DefinitionContext {
  */
 @Injectable()
 export class FormDefinitionValidatorService {
-  private readonly ajv: Ajv2020;
+  private readonly ajv: ReturnType<typeof createFormAjv>;
 
   public constructor() {
-    // strictRequired: false —— JSON Schema 的 required 由标准校验器处理，
-    // 此处仅校验 Schema 结构，不额外要求每个 property 自身声明 required。
-    this.ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
-    addFormats(this.ajv);
-    // 注册 x-form 关键字使 AJV 不会因未知关键字报错。
-    this.ajv.addKeyword({ keyword: 'x-form', schemaType: 'object', valid: true });
+    this.ajv = createFormAjv();
   }
 
   /**
@@ -68,28 +68,27 @@ export class FormDefinitionValidatorService {
     if (schema.type !== 'object' || schema.additionalProperties !== false) {
       throw new BadRequestException('Form Schema must be an object and reject additional properties');
     }
+    let parsed: ReturnType<typeof parseFormSchema>;
     try {
       this.ajv.compile(schema);
       // 平台扩展校验（x-form 命名空间、Form item ID 格式、i18n 等）。
-      validateFormSchemaExtensions(schema as JsonSchema);
+      parsed = parseFormSchema(schema as JsonSchema);
     } catch (error) {
       throw new BadRequestException(
         `Invalid Form Schema: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    const rootExtension = schema['x-form'] as Record<string, unknown>;
+    const rootExtension = parsed.rootExtension;
     if (rootExtension.datasetId !== context.dataset.id) {
       throw new BadRequestException('Form Schema Dataset binding does not match the Form');
     }
 
     const fieldsById = new Map(context.fields.map((field) => [field.id, field]));
     const datasetsById = new Map(context.targetDatasets.map((dataset) => [dataset.id, dataset]));
-    const properties = schema.properties as Record<string, Record<string, unknown>>;
-
     // 提取所有 Form item → DatasetField 映射。
-    const mappings = Object.entries(properties).map(([itemId, property]) => ({
-      itemId,
-      extension: property['x-form'] as Record<string, unknown>,
+    const mappings = parsed.items.map(({ id, extension }) => ({
+      itemId: id,
+      extension,
     }));
 
     // 同一 Schema 中一个 DatasetField 最多被一个 Form item 映射。
@@ -110,7 +109,7 @@ export class FormDefinitionValidatorService {
       }
 
       // 关联字段额外校验。
-      const ui = extension.ui as Record<string, unknown> | undefined;
+      const ui = extension.ui as unknown as Record<string, unknown> | undefined;
       if (field.kind === DatasetFieldKind.relation) {
         const target = field.relationTargetDatasetId
           ? datasetsById.get(field.relationTargetDatasetId)
@@ -136,6 +135,26 @@ export class FormDefinitionValidatorService {
       if (!field || field.datasetId !== context.dataset.id || !field.isSystemManaged
         || field.systemKey !== captureSystemKeys[key]) {
         throw new BadRequestException(`Invalid managed capture field: ${key}`);
+      }
+    });
+
+    const projected = projectCurrentFormFields(parsed, context.fields as never);
+    parsed.items.forEach((item) => {
+      if (!Object.hasOwn(item.property, 'default')) return;
+      const property = (projected.schema.properties as Record<string, unknown>)[item.id];
+      const defaultSchema = {
+        type: 'object',
+        additionalProperties: false,
+        properties: { [item.id]: property },
+        required: [item.id],
+        ...('$defs' in projected.schema && { $defs: projected.schema.$defs }),
+      };
+      const validateDefault = this.ajv.compile(defaultSchema);
+      if (!validateDefault({ [item.id]: item.property.default })) {
+        throw new BadRequestException({
+          message: `Invalid default for Form item: ${item.id}`,
+          errors: validateDefault.errors,
+        });
       }
     });
 
@@ -174,6 +193,33 @@ export class FormDefinitionValidatorService {
       if (missingRequired) {
         throw new BadRequestException(`Required Dataset field is not mapped: ${missingRequired.id}`);
       }
+      const evaluatedDefaults = evaluateFormAnswers({
+        parsed,
+        runtimeSchema: projected.schema,
+        inputAnswers: {},
+        rejectExplicitHidden: false,
+      });
+      context.fields
+        .filter((field) => field.datasetId === context.dataset.id
+          && !field.archivedAt
+          && !field.isSystemManaged
+          && field.required)
+        .forEach((field) => {
+          const item = parsed.items.find((candidate) => (
+            candidate.extension.datasetFieldId === field.id
+          ));
+          if (!item) return;
+          if (item.extension.availableIf) {
+            throw new BadRequestException(
+              `Required Dataset field cannot be conditionally hidden: ${field.id}`,
+            );
+          }
+          if (!item.required && !Object.hasOwn(evaluatedDefaults.answers, item.id)) {
+            throw new BadRequestException(
+              `Required Dataset field item must be required or have a valid default: ${field.id}`,
+            );
+          }
+        });
     }
   }
 

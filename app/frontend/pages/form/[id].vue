@@ -24,6 +24,9 @@ import { resolveLocalizedText } from '@weave/utils';
 import { useAuthStore } from '~/stores/auth';
 import { toApiError } from '~/utils/api';
 import {
+  canSubmitPublishedForm,
+} from '~/utils/form-lifecycle';
+import {
   prepareFormSubmissionAttempt,
   type FormSubmissionAttempt,
 } from '~/utils/form-submission-idempotency';
@@ -111,7 +114,7 @@ function submissionErrorMessage(error: unknown): string {
 }
 
 async function submit(payload: Omit<SubmitFormRequest, 'formId'>): Promise<void> {
-  if (submissionPending.value) return;
+  if (submissionPending.value || !canSubmitPublishedForm(form.value)) return;
   const generation = formGeneration;
   attempt.value = prepareFormSubmissionAttempt(
     attempt.value,

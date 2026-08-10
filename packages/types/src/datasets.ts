@@ -41,6 +41,25 @@ export const datasetFieldKinds = [
 ] as const;
 export type DatasetFieldKind = (typeof datasetFieldKinds)[number];
 
+/** 选择字段模式：普通平铺选项或单条完整级联路径。 */
+export const datasetChoiceOptionModes = ['flat', 'cascader'] as const;
+export type DatasetChoiceOptionMode = (typeof datasetChoiceOptionModes)[number];
+
+/** Dataset 选择项的规范持久化结构。 */
+export interface DatasetChoiceOption {
+  value: string;
+  label: string;
+  i18n?: Record<string, string>;
+  color?: string;
+  children?: DatasetChoiceOption[];
+}
+
+/** 选择字段 config 的已知部分；DatasetFieldDefinition 仍保留开放 JSON config。 */
+export interface DatasetChoiceConfig {
+  optionMode?: DatasetChoiceOptionMode;
+  options?: DatasetChoiceOption[];
+}
+
 /** 关联字段基数：一对一或一对多。 */
 export const relationCardinalities = ['one', 'many'] as const;
 export type RelationCardinality = (typeof relationCardinalities)[number];

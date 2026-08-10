@@ -8,9 +8,21 @@ import {
   useTemplateRef,
   watch,
 } from '#imports';
-import type { FormItemId, JsonSchema, JsonValue } from '@weave/types';
-import { createInitialFormState, getSchemaProperties } from '@weave/utils';
+import type {
+  DatasetChoiceOption,
+  FormItemId,
+  JsonSchema,
+  JsonValue,
+} from '@weave/types';
+import {
+  canonicalizeJson,
+  cloneJson,
+  evaluateFormAnswers,
+  parseFormSchema,
+} from '@weave/utils';
 import { useFormFieldEditingState } from '~/composables/useFormFieldEditing';
+import { resolveFormRenderItems } from '~/utils/form-render-items';
+import { transitionFormSelection } from '~/utils/form-selection';
 import {
   formRenderContextKey,
   type FormRenderContext,
@@ -23,12 +35,14 @@ const props = withDefaults(defineProps<{
   locale?: string;
   defaultLocale?: string;
   errors?: Readonly<Record<FormItemId, string>>;
+  choiceOptions?: Readonly<Record<FormItemId, readonly DatasetChoiceOption[]>>;
   loadRelationOptions?: FormRenderContext['loadRelationOptions'];
 }>(), {
   mode: 'fill',
   locale: 'zh-CN',
   defaultLocale: 'zh-CN',
   errors: () => ({}),
+  choiceOptions: () => ({}),
   loadRelationOptions: undefined,
 });
 
@@ -53,7 +67,28 @@ const emit = defineEmits<{
 
 const { selectedFieldId: activeEditingId, clearEditing } = useFormFieldEditingState();
 
-const properties = computed(() => getSchemaProperties(props.schema));
+const parsed = computed(() => parseFormSchema(props.schema, { mode: 'legacy' }));
+const evaluation = computed(() => (props.mode === 'fill'
+  ? evaluateFormAnswers({
+    parsed: parsed.value,
+    runtimeSchema: parsed.value.schema,
+    inputAnswers: state.value,
+    rejectExplicitHidden: false,
+  })
+  : null));
+
+const resolvedItems = computed(() => {
+  const visibleIds = evaluation.value
+    ? new Set(evaluation.value.visibleItemIds)
+    : undefined;
+  return resolveFormRenderItems(
+    parsed.value,
+    props.locale,
+    props.defaultLocale,
+    props.choiceOptions,
+    visibleIds,
+  );
+});
 
 const formContext = computed<FormRenderContext>(() => ({
   defaultLocale: props.defaultLocale,
@@ -61,25 +96,24 @@ const formContext = computed<FormRenderContext>(() => ({
   loadRelationOptions: props.loadRelationOptions,
   locale: props.locale,
   mode: props.mode,
-  schema: props.schema,
   state: state.value,
 }));
 
 provide(formRenderContextKey, formContext);
 
-/** 首次挂载时若 state 为空，用 schema default 初始化。 */
+/** Apply topological hidden clearing/defaults only when the semantic output changed. */
 watch(
-  () => props.schema,
-  (schema) => {
-    if (Object.keys(state.value).length > 0) return;
-    state.value = createInitialFormState(schema);
+  () => evaluation.value?.answers,
+  (answers) => {
+    if (!answers) return;
+    const current = Object.fromEntries(
+      Object.entries(state.value).filter((entry) => entry[1] !== undefined),
+    ) as Record<FormItemId, JsonValue>;
+    if (canonicalizeJson(current) === canonicalizeJson(answers)) return;
+    state.value = cloneJson(answers);
   },
-  { immediate: true },
+  { deep: true, immediate: true },
 );
-
-watch(activeEditingId, (id) => {
-  if (selectedFieldId.value !== id) selectedFieldId.value = id;
-});
 
 watch(selectedFieldId, (id) => {
   if (id === null && activeEditingId.value !== null) clearEditing();
@@ -95,7 +129,18 @@ watch(
 const allowEdit = computed(() => props.mode === 'edit');
 
 function onBlankClick(): void {
-  if (props.mode === 'edit') clearEditing();
+  if (props.mode !== 'edit') return;
+  clearEditing();
+  selectedFieldId.value = transitionFormSelection(selectedFieldId.value, { type: 'canvas_blank' });
+}
+
+function selectField(fieldId: string): void {
+  if (props.mode === 'edit') {
+    selectedFieldId.value = transitionFormSelection(
+      selectedFieldId.value,
+      { type: 'item_select', fieldId },
+    );
+  }
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -126,10 +171,11 @@ function onSubmit(): void {
     @click.self="onBlankClick"
   >
     <FormField
-      v-for="(_, itemId) in properties ?? {}"
-      :key="itemId"
-      :field-id="itemId"
+      v-for="item in resolvedItems"
+      :key="item.id"
+      :item="item"
       :allow-edit="allowEdit"
+      @select="selectField"
       @up="emit('up', $event)"
       @down="emit('down', $event)"
       @duplicate="emit('duplicate', $event)"

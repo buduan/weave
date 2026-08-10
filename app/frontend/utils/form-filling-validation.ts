@@ -1,6 +1,4 @@
 import type { ErrorObject } from 'ajv';
-import Ajv2020 from 'ajv/dist/2020';
-import addFormats from 'ajv-formats';
 
 import type {
   FormItemId,
@@ -8,11 +6,12 @@ import type {
   JsonValue,
 } from '@weave/types';
 import {
-  filterVisibleAnswers,
-  getItemExtension,
-  getSchemaProperties,
+  createFormAjv,
+  evaluateFormAnswers,
+  parseFormSchema,
   resolveLocalizedText,
 } from '@weave/utils';
+import type { ParsedFormSchema } from '@weave/utils';
 
 export interface FormFillingValidationResult {
   answers: Record<FormItemId, JsonValue>;
@@ -30,14 +29,14 @@ function itemIdFromError(error: ErrorObject): string | undefined {
 }
 
 function itemTitle(
-  schema: JsonSchema,
+  parsed: ParsedFormSchema | null,
   itemId: string,
   locale: string,
   defaultLocale: string,
 ): string {
-  const property = getSchemaProperties(schema)?.[itemId];
+  const item = parsed?.items.find((candidate) => candidate.id === itemId);
   return resolveLocalizedText(
-    getItemExtension(property)?.i18n?.title,
+    item?.extension.i18n?.title,
     locale,
     defaultLocale,
   ) ?? itemId;
@@ -50,25 +49,42 @@ export function validateFormFilling(
   locale: string,
   defaultLocale: string,
 ): FormFillingValidationResult {
-  const payload = structuredClone(filterVisibleAnswers(schema, answers));
-  const ajv = new Ajv2020({
-    allErrors: true,
-    strict: true,
-    strictRequired: false,
-    useDefaults: true,
-  });
-  addFormats(ajv);
-  ajv.addKeyword({ keyword: 'x-form', schemaType: 'object', valid: true });
-  const validate = ajv.compile(schema);
+  let parsed: ParsedFormSchema | null = null;
+  let payload: Record<FormItemId, JsonValue> = {};
+  let effectiveSchema = schema;
+  if (typeof schema !== 'boolean') {
+    try {
+      parsed = parseFormSchema(schema, { mode: 'legacy' });
+      const evaluated = evaluateFormAnswers({
+        parsed,
+        runtimeSchema: schema,
+        inputAnswers: answers,
+        rejectExplicitHidden: false,
+      });
+      payload = evaluated.answers;
+      effectiveSchema = evaluated.effectiveSchema;
+    } catch (error) {
+      return {
+        answers: {},
+        fieldErrors: {},
+        formErrors: [
+          `表单配置无效：${error instanceof Error ? error.message : String(error)}`,
+        ],
+        valid: false,
+      };
+    }
+  }
+  const ajv = createFormAjv();
+  const validate = ajv.compile(effectiveSchema);
   const valid = validate(payload);
   const fieldErrors: Record<string, string> = {};
   const formErrors: string[] = [];
   (validate.errors ?? []).forEach((error) => {
     if (error.keyword === 'if' && (validate.errors?.length ?? 0) > 1) return;
     const itemId = itemIdFromError(error);
-    if (itemId && getSchemaProperties(schema)?.[itemId]) {
+    if (itemId && parsed?.items.some((item) => item.id === itemId)) {
       if (!fieldErrors[itemId]) {
-        const title = itemTitle(schema, itemId, locale, defaultLocale);
+        const title = itemTitle(parsed, itemId, locale, defaultLocale);
         fieldErrors[itemId] = error.keyword === 'required'
           ? `${title}为必填项`
           : `${title}${error.message ? `：${error.message}` : '格式不正确'}`;

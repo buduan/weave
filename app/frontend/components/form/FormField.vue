@@ -10,13 +10,7 @@ import {
 } from '#imports';
 import type { JsonValue } from '@weave/types';
 import {
-  getChoiceOptions,
-  getItemExtension,
   getRelationFilterDependencies,
-  getRequiredItemIds,
-  getSchemaProperties,
-  isItemVisible,
-  resolveLocalizedText,
 } from '@weave/utils';
 import { useFormFieldEditing } from '~/composables/useFormFieldEditing';
 import {
@@ -25,31 +19,27 @@ import {
 } from '~/utils/form-relation-options';
 import {
   resolveFormComponent,
-  resolveInputType,
-  resolveWidgetName,
 } from './component-map';
+import { resolveInputType, resolveWidgetName } from './widget-resolution';
 import type {
   FocusableInputInstance,
+  ResolvedFormItem,
 } from './types';
 import { formRenderContextKey } from './types';
 
 defineOptions({ name: 'FormField' });
 
 const props = defineProps<{
-  /** 稳定字段 id —— 即 JSON Schema 的 property key。 */
-  fieldId: string;
+  item: ResolvedFormItem;
   allowEdit?: boolean;
-  description?: string;
-  title?: string;
-  required?: boolean;
-  name?: string;
   error?: boolean | string;
 }>();
 
 /** 编辑态由共享互斥上下文派生：同一时刻至多一个字段处于编辑态。 */
-const { editing } = useFormFieldEditing(props.fieldId);
+const { editing } = useFormFieldEditing(props.item.id);
 
 const emit = defineEmits<{
+  select: [fieldId: string];
   up: [fieldId: string];
   down: [fieldId: string];
   duplicate: [fieldId: string];
@@ -61,68 +51,18 @@ const emit = defineEmits<{
 
 const formContext = inject(formRenderContextKey, null);
 
-const locale = computed(() => formContext?.value.locale ?? 'zh-CN');
-const defaultLocale = computed(() => formContext?.value.defaultLocale ?? 'zh-CN');
-const schema = computed(() => formContext?.value.schema);
 const state = computed(() => formContext?.value.state);
-
-const properties = computed(() => (
-  schema.value ? getSchemaProperties(schema.value) : null
-));
-const requiredIds = computed(() => (
-  schema.value ? getRequiredItemIds(schema.value) : new Set<string>()
-));
-
-const property = computed(() => properties.value?.[props.fieldId]);
-const itemExtension = computed(() => getItemExtension(property.value));
-
-const visible = computed(() => isItemVisible(itemExtension.value, state.value ?? {}));
-
-const resolvedTitle = computed(() => {
-  if (props.title !== undefined) return props.title;
-  return resolveLocalizedText(
-    itemExtension.value?.i18n?.title,
-    locale.value,
-    defaultLocale.value,
-  ) ?? props.fieldId;
-});
-
-const resolvedDescription = computed(() => {
-  if (props.description !== undefined) return props.description;
-  return resolveLocalizedText(
-    itemExtension.value?.i18n?.description,
-    locale.value,
-    defaultLocale.value,
-  );
-});
-
-const fieldName = computed(() => props.name ?? props.fieldId);
-const fieldRequired = computed(() => (
-  props.required ?? requiredIds.value.has(props.fieldId)
-));
-
-const widgetName = computed(() => resolveWidgetName(itemExtension.value?.ui?.widget));
+const resolvedTitle = computed(() => props.item.title);
+const resolvedDescription = computed(() => props.item.description);
+const fieldRequired = computed(() => props.item.required);
+const widgetName = computed(() => resolveWidgetName(props.item.widget));
 const leafComponent = computed(() => resolveFormComponent(widgetName.value));
 
-const placeholder = computed(() => (
-  resolveLocalizedText(
-    itemExtension.value?.i18n?.placeholder,
-    locale.value,
-    defaultLocale.value,
-  )
-));
-
-const staticChoiceOptions = computed(() => getChoiceOptions(
-  property.value,
-  locale.value,
-  defaultLocale.value,
-));
-
 const relationDependencies = computed(() => getRelationFilterDependencies(
-  itemExtension.value?.ui?.options?.filter,
+  props.item.extension.ui?.options?.filter,
 ));
 const hasRelationOptions = computed(() => (
-  typeof itemExtension.value?.ui?.options?.labelFieldId === 'string'
+  typeof props.item.extension.ui?.options?.labelFieldId === 'string'
   && Boolean(formContext?.value.loadRelationOptions)
 ));
 const remoteChoiceOptions = shallowRef<Array<{ label: string; value: string }>>([]);
@@ -131,9 +71,9 @@ const relationError = shallowRef<string | null>(null);
 let latestRelationRequestId = 0;
 
 const relationRequest = computed(() => {
-  if (!hasRelationOptions.value || !visible.value) return null;
+  if (!hasRelationOptions.value) return null;
   return createRelationOptionRequest(
-    props.fieldId,
+    props.item.id,
     relationDependencies.value,
     state.value ?? {},
   );
@@ -141,14 +81,14 @@ const relationRequest = computed(() => {
 
 function discardUnavailableSelection(optionIds: ReadonlySet<string>): void {
   if (!state.value) return;
-  const current = state.value[props.fieldId];
+  const current = state.value[props.item.id];
   if (Array.isArray(current)) {
     const next = current.filter((value) => typeof value === 'string' && optionIds.has(value));
-    if (next.length !== current.length) state.value[props.fieldId] = next;
+    if (next.length !== current.length) state.value[props.item.id] = next;
     return;
   }
   if (current !== undefined && (typeof current !== 'string' || !optionIds.has(current))) {
-    delete state.value[props.fieldId];
+    delete state.value[props.item.id];
   }
 }
 
@@ -166,7 +106,7 @@ async function loadRemoteOptions(): Promise<void> {
   relationLoading.value = true;
   relationError.value = null;
   try {
-    const options = await loader(props.fieldId, request.values);
+    const options = await loader(props.item.id, request.values);
     if (!isLatestRelationRequest(requestId, latestRelationRequestId)) return;
     remoteChoiceOptions.value = options.map((option) => ({
       label: option.label,
@@ -194,19 +134,19 @@ watch(
 );
 
 const choiceOptions = computed(() => (
-  hasRelationOptions.value ? remoteChoiceOptions.value : staticChoiceOptions.value
+  hasRelationOptions.value ? remoteChoiceOptions.value : props.item.choiceOptions
 ));
-const resolvedError = computed(() => props.error ?? formContext?.value.errors[props.fieldId]);
+const resolvedError = computed(() => props.error ?? formContext?.value.errors[props.item.id]);
 
 const leafProps = computed(() => {
   const base: Record<string, unknown> = {
-    placeholder: placeholder.value,
+    placeholder: props.item.placeholder,
     required: fieldRequired.value,
     disabled: props.allowEdit,
     'aria-label': resolvedTitle.value,
   };
   if (widgetName.value === 'input') {
-    base.type = resolveInputType(property.value);
+    base.type = resolveInputType(props.item.property);
   }
   if (
     widgetName.value === 'checkbox'
@@ -219,12 +159,12 @@ const leafProps = computed(() => {
   if (widgetName.value === 'selector' || widgetName.value === 'cascader') {
     base.options = choiceOptions.value;
   }
-  if (widgetName.value === 'selector' && property.value) {
-    const prop = property.value as Record<string, unknown>;
+  if (widgetName.value === 'selector') {
+    const prop = props.item.property as Record<string, unknown>;
     if (prop.type === 'array') base.multiple = true;
   }
-  if (widgetName.value === 'checkbox' && property.value) {
-    const prop = property.value as Record<string, unknown>;
+  if (widgetName.value === 'checkbox') {
+    const prop = props.item.property as Record<string, unknown>;
     base.boolean = prop.type === 'boolean' && choiceOptions.value.length === 0;
   }
   if (hasRelationOptions.value) base.disabled = props.allowEdit || relationLoading.value;
@@ -232,10 +172,10 @@ const leafProps = computed(() => {
 });
 
 const modelValue = computed<JsonValue | undefined>({
-  get: () => (props.allowEdit ? undefined : state.value?.[props.fieldId]),
+  get: () => (props.allowEdit ? undefined : state.value?.[props.item.id]),
   set: (value) => {
     if (props.allowEdit || !state.value) return;
-    state.value[props.fieldId] = value;
+    state.value[props.item.id] = value;
   },
 });
 
@@ -281,7 +221,7 @@ function startDescriptionEdit(): void {
 function finishTitleEdit(): void {
   titleEditing.value = false;
   if (titleDraft.value !== resolvedTitle.value) {
-    emit('update:title', props.fieldId, titleDraft.value);
+    emit('update:title', props.item.id, titleDraft.value);
   }
 }
 
@@ -289,26 +229,25 @@ function finishDescriptionEdit(): void {
   descriptionEditing.value = false;
   const next = descriptionDraft.value || undefined;
   if (next !== resolvedDescription.value) {
-    emit('update:description', props.fieldId, next);
+    emit('update:description', props.item.id, next);
   }
 }
 
 function enterEdit(): void {
-  if (props.allowEdit && !editing.value) {
-    editing.value = true;
-  }
+  if (!props.allowEdit) return;
+  emit('select', props.item.id);
+  if (!editing.value) editing.value = true;
 }
 
-function emitUp(): void { emit('up', props.fieldId); }
-function emitDown(): void { emit('down', props.fieldId); }
-function emitDuplicate(): void { emit('duplicate', props.fieldId); }
-function emitSettings(): void { emit('settings', props.fieldId); }
-function emitDelete(): void { emit('delete', props.fieldId); }
+function emitUp(): void { emit('up', props.item.id); }
+function emitDown(): void { emit('down', props.item.id); }
+function emitDuplicate(): void { emit('duplicate', props.item.id); }
+function emitSettings(): void { emit('settings', props.item.id); }
+function emitDelete(): void { emit('delete', props.item.id); }
 </script>
 
 <template>
   <div
-    v-if="visible"
     class="overflow-hidden rounded-xl border transition-[border-color,box-shadow]
       duration-200 ease-out"
     :class="[
@@ -395,7 +334,7 @@ function emitDelete(): void { emit('delete', props.fieldId); }
       <!-- 叶子 item：UFormField + componentMap -->
       <div class="mt-3">
         <UFormField
-          :name="fieldName"
+          :name="item.id"
           :label="resolvedTitle"
           :required="fieldRequired"
           :error="resolvedError"

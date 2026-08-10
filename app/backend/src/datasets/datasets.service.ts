@@ -22,7 +22,12 @@ import type {
   DatasetFieldDefinition,
   DatasetListResponse,
   DatasetSummary,
+  JsonSchema,
 } from '@weave/types';
+import {
+  hasChoiceMembershipSchema,
+  normalizeDatasetChoiceConfig,
+} from '@weave/utils';
 
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,6 +44,26 @@ import type {
 
 /** 同时接受交互式事务 client 和单例 PrismaService 的数据库客户端类型。 */
 type DbClient = Prisma.TransactionClient | PrismaService;
+
+const datasetSummarySelect = {
+  id: true,
+  workspaceId: true,
+  name: true,
+  slug: true,
+  description: true,
+  type: true,
+  status: true,
+  subjectMode: true,
+  revision: true,
+  createdAt: true,
+  updatedAt: true,
+  createdBy: {
+    select: {
+      id: true, name: true, nickname: true, username: true, avatarUrl: true,
+    },
+  },
+  collaborators: { select: { workspaceMemberId: true, role: true } },
+} satisfies Prisma.DatasetSelect;
 
 /**
  * 管理 Dataset 的元数据、字段、协作者及定义版本历史。
@@ -69,25 +94,7 @@ export class DatasetsService {
           collaborators: { some: { workspaceMemberId: member?.id ?? '__missing__' } },
         }),
       },
-      select: {
-        id: true,
-        workspaceId: true,
-        name: true,
-        slug: true,
-        description: true,
-        type: true,
-        status: true,
-        subjectMode: true,
-        revision: true,
-        createdAt: true,
-        updatedAt: true,
-        createdBy: {
-          select: {
-            id: true, name: true, nickname: true, username: true, avatarUrl: true,
-          },
-        },
-        collaborators: { select: { workspaceMemberId: true, role: true } },
-      },
+      select: datasetSummarySelect,
       orderBy: { createdAt: 'desc' },
     });
     const actorMember = member ?? await this.findActorMember(workspaceId, actor.userId);
@@ -112,23 +119,7 @@ export class DatasetsService {
     const dataset = await this.prisma.dataset.findUniqueOrThrow({
       where: { workspaceId_id: { workspaceId, id: datasetId } },
       select: {
-        id: true,
-        workspaceId: true,
-        name: true,
-        slug: true,
-        description: true,
-        type: true,
-        status: true,
-        subjectMode: true,
-        revision: true,
-        createdAt: true,
-        updatedAt: true,
-        createdBy: {
-          select: {
-            id: true, name: true, nickname: true, username: true, avatarUrl: true,
-          },
-        },
-        collaborators: { select: { workspaceMemberId: true, role: true } },
+        ...datasetSummarySelect,
         fields: {
           where: { archivedAt: null },
           orderBy: [{ position: 'asc' }, { id: 'asc' }],
@@ -460,25 +451,25 @@ export class DatasetsService {
     this.assertTypeCapability(dataset.type, 'fields');
     // 提前编译 value schema，失败时不碰数据库。
     const valueSchema = this.schemas.assertFieldSchema(dto.valueSchema);
+    const config = this.normalizeChoiceConfigForWrite(
+      dto.kind,
+      dto.config,
+      dto.valueSchema as JsonSchema,
+      true,
+    );
     await this.assertRelationConfiguration(workspaceId, dto);
     try {
       const transactionResult = await this.prisma.$transaction(async (tx) => {
-        const datasetResult = await tx.dataset.updateMany({
-          where: {
-            id: datasetId,
-            workspaceId,
-            revision: dto.expectedDatasetRevision,
-            status: DatasetStatus.active,
-          },
-          data: { revision: { increment: 1 } },
-        });
-        if (datasetResult.count !== 1) throw new ConflictException('Dataset revision is stale');
-        const activeFields = await tx.datasetField.findMany({
-          where: { datasetId, archivedAt: null },
-          orderBy: [{ position: 'asc' }, { id: 'asc' }],
-          select: { id: true },
-        });
-        const position = Math.min(dto.position ?? activeFields.length, activeFields.length);
+        await this.incrementDatasetRevision(
+          tx,
+          workspaceId,
+          datasetId,
+          dto.expectedDatasetRevision,
+          'Dataset revision is stale',
+          DatasetStatus.active,
+        );
+        const activeFieldIds = await this.findActiveFieldIds(tx, datasetId);
+        const position = Math.min(dto.position ?? activeFieldIds.length, activeFieldIds.length);
         const field = await tx.datasetField.create({
           data: {
             workspaceId,
@@ -488,14 +479,14 @@ export class DatasetsService {
             description: dto.description,
             kind: dto.kind,
             valueSchema,
-            config: dto.config as Prisma.InputJsonObject,
+            config,
             required: dto.required,
             relationTargetDatasetId: dto.relationTargetDatasetId,
             relationCardinality: dto.relationCardinality,
             position,
           },
         });
-        const orderedIds = activeFields.map((item) => item.id);
+        const orderedIds = [...activeFieldIds];
         orderedIds.splice(position, 0, field.id);
         await this.normalizeFieldPositions(tx, orderedIds);
         await this.createDefinitionVersion(tx, datasetId, actor.userId, 'dataset.field.create');
@@ -547,18 +538,24 @@ export class DatasetsService {
     const valueSchema = dto.valueSchema === undefined
       ? undefined
       : this.schemas.assertFieldSchema(dto.valueSchema);
+    const config = dto.config === undefined
+      ? undefined
+      : this.normalizeChoiceConfigForWrite(
+        field.kind,
+        dto.config,
+        (dto.valueSchema ?? field.valueSchema) as JsonSchema,
+        dto.valueSchema !== undefined,
+      );
     try {
       const transactionResult = await this.prisma.$transaction(async (tx) => {
-        const datasetResult = await tx.dataset.updateMany({
-          where: {
-            id: datasetId,
-            workspaceId,
-            revision: dto.expectedDatasetRevision,
-            status: DatasetStatus.active,
-          },
-          data: { revision: { increment: 1 } },
-        });
-        if (datasetResult.count !== 1) throw new ConflictException('Dataset revision is stale');
+        await this.incrementDatasetRevision(
+          tx,
+          workspaceId,
+          datasetId,
+          dto.expectedDatasetRevision,
+          'Dataset revision is stale',
+          DatasetStatus.active,
+        );
         const result = await tx.datasetField.updateMany({
           where: {
             id: fieldId, workspaceId, datasetId, revision: dto.expectedFieldRevision,
@@ -567,18 +564,14 @@ export class DatasetsService {
             name: dto.name,
             description: dto.description,
             valueSchema,
-            config: dto.config as Prisma.InputJsonObject | undefined,
+            config,
             required: dto.required,
             revision: { increment: 1 },
           },
         });
         if (result.count !== 1) throw new ConflictException('Dataset field revision is stale');
-        const activeFields = await tx.datasetField.findMany({
-          where: { datasetId, archivedAt: null, id: { not: fieldId } },
-          orderBy: [{ position: 'asc' }, { id: 'asc' }],
-          select: { id: true },
-        });
-        const orderedIds = activeFields.map((item) => item.id);
+        const activeFieldIds = await this.findActiveFieldIds(tx, datasetId, fieldId);
+        const orderedIds = [...activeFieldIds];
         const position = Math.min(dto.position ?? field.position, orderedIds.length);
         orderedIds.splice(position, 0, fieldId);
         await this.normalizeFieldPositions(tx, orderedIds);
@@ -622,16 +615,14 @@ export class DatasetsService {
     const field = await this.findField(workspaceId, datasetId, fieldId);
     if (field.isSystemManaged) throw new ConflictException('Protected system fields cannot be archived');
     return this.prisma.$transaction(async (tx) => {
-      const datasetResult = await tx.dataset.updateMany({
-        where: {
-          id: datasetId,
-          workspaceId,
-          revision: dto.expectedDatasetRevision,
-          status: DatasetStatus.active,
-        },
-        data: { revision: { increment: 1 } },
-      });
-      if (datasetResult.count !== 1) throw new ConflictException('Dataset revision is stale');
+      await this.incrementDatasetRevision(
+        tx,
+        workspaceId,
+        datasetId,
+        dto.expectedDatasetRevision,
+        'Dataset revision is stale',
+        DatasetStatus.active,
+      );
       const result = await tx.datasetField.updateMany({
         where: {
           id: fieldId,
@@ -644,12 +635,8 @@ export class DatasetsService {
       });
       if (result.count !== 1) throw new ConflictException('Dataset field revision is stale or archived');
       const updated = await tx.datasetField.findUniqueOrThrow({ where: { id: fieldId } });
-      const activeFields = await tx.datasetField.findMany({
-        where: { datasetId, archivedAt: null },
-        orderBy: [{ position: 'asc' }, { id: 'asc' }],
-        select: { id: true },
-      });
-      await this.normalizeFieldPositions(tx, activeFields.map((item) => item.id));
+      const activeFieldIds = await this.findActiveFieldIds(tx, datasetId);
+      await this.normalizeFieldPositions(tx, activeFieldIds);
       await this.createDefinitionVersion(tx, datasetId, actor.userId, 'dataset.field.archive');
       await this.audit.record({
         action: 'dataset.field.archive',
@@ -831,6 +818,34 @@ export class DatasetsService {
     if (!allowed) throw new ForbiddenException(`Dataset type does not allow ${operation}`);
   }
 
+  /** Canonicalize new choice config writes while leaving unrelated UI config untouched. */
+  private normalizeChoiceConfigForWrite(
+    kind: DatasetFieldKind,
+    config: Record<string, unknown>,
+    valueSchema: JsonSchema,
+    rejectSubmittedMembership: boolean,
+  ): Prisma.InputJsonObject {
+    if (kind !== DatasetFieldKind.single_select && kind !== DatasetFieldKind.multi_select) {
+      return config as Prisma.InputJsonObject;
+    }
+    const normalized = normalizeDatasetChoiceConfig(kind, config, {
+      allowLegacyStrings: false,
+    });
+    if (!normalized.hasOptions) {
+      throw new BadRequestException('New Dataset choice config must declare options');
+    }
+    if (rejectSubmittedMembership && hasChoiceMembershipSchema(valueSchema)) {
+      throw new BadRequestException(
+        'Dataset choice membership must be declared only in config.options',
+      );
+    }
+    return {
+      ...config,
+      options: normalized.options as unknown as Prisma.InputJsonArray,
+      ...(normalized.optionMode === 'cascader' && { optionMode: 'cascader' }),
+    } as Prisma.InputJsonObject;
+  }
+
   private toSummary(dataset: {
     createdAt: Date;
     description: string | null;
@@ -980,6 +995,43 @@ export class DatasetsService {
       },
     });
     if (otherOwners === 0) throw new ConflictException('An active Dataset must retain an owner');
+  }
+
+  private async incrementDatasetRevision(
+    tx: Prisma.TransactionClient,
+    workspaceId: number,
+    datasetId: string,
+    expectedRevision: number,
+    staleMessage: string,
+    status?: DatasetStatus,
+  ): Promise<void> {
+    const result = await tx.dataset.updateMany({
+      where: {
+        id: datasetId,
+        workspaceId,
+        revision: expectedRevision,
+        ...(status === undefined ? {} : { status }),
+      },
+      data: { revision: { increment: 1 } },
+    });
+    if (result.count !== 1) throw new ConflictException(staleMessage);
+  }
+
+  private async findActiveFieldIds(
+    tx: Prisma.TransactionClient,
+    datasetId: string,
+    excludeFieldId?: string,
+  ): Promise<string[]> {
+    const fields = await tx.datasetField.findMany({
+      where: {
+        datasetId,
+        archivedAt: null,
+        ...(excludeFieldId && { id: { not: excludeFieldId } }),
+      },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    return fields.map((field) => field.id);
   }
 
   /** 将给定活跃字段顺序持久化为从 0 开始的连续 position。 */

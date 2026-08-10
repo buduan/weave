@@ -7,9 +7,12 @@ import type {
 } from '@weave/types';
 import {
   getDatasetFieldOptions,
+  normalizeDatasetChoiceConfig,
   parseDatasetFieldInputValue,
 } from '@weave/utils';
 import { reactive, watch } from '#imports';
+import FormItemsCascader from '../form/items/Cascader.vue';
+import { toFormItemOptions } from '../form/items/types';
 import type {
   DatasetOption,
   DatasetRelationOptionState,
@@ -66,6 +69,24 @@ function isChoiceField(field: DatasetFieldDefinition): boolean {
     || field.kind === 'relation';
 }
 
+function isCascader(field: DatasetFieldDefinition): boolean {
+  if (field.kind !== 'multi_select') return false;
+  try {
+    return normalizeDatasetChoiceConfig(field.kind, field.config).optionMode === 'cascader';
+  } catch {
+    return false;
+  }
+}
+
+function cascaderOptions(field: DatasetFieldDefinition) {
+  if (field.kind !== 'multi_select') return [];
+  try {
+    return toFormItemOptions(normalizeDatasetChoiceConfig(field.kind, field.config).options);
+  } catch {
+    return [];
+  }
+}
+
 function isMultiple(field: DatasetFieldDefinition): boolean {
   return field.kind === 'multi_select'
     || (field.kind === 'relation' && field.relationCardinality === 'many');
@@ -82,6 +103,11 @@ function options(field: DatasetFieldDefinition): DatasetOption[] {
 function selectValue(fieldId: string): string | string[] {
   const value = drafts[fieldId];
   return Array.isArray(value) ? value.map(String) : String(value ?? '');
+}
+
+function cascaderValue(fieldId: string): string[] {
+  const value = drafts[fieldId];
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 function updateDraft(fieldId: string, value: unknown): void {
@@ -181,6 +207,17 @@ function submit(): void {
         class="h-full w-full"
         :ui="{ base: 'h-10 resize-none overflow-y-auto px-2 py-1.5 text-sm' }"
         :aria-label="field.name"
+        @update:model-value="updateDraft(field.id, $event)"
+      />
+
+      <FormItemsCascader
+        v-else-if="isCascader(field)"
+        :model-value="cascaderValue(field.id)"
+        :items="cascaderOptions(field)"
+        :disabled="isFieldDisabled(field)"
+        :required="field.required"
+        :aria-label="field.name"
+        class="w-full"
         @update:model-value="updateDraft(field.id, $event)"
       />
 
