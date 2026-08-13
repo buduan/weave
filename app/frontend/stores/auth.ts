@@ -69,7 +69,6 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function onAccessTokenExpired(): void {
-    if (!accessToken.value && !refreshToken.value) return;
     clear();
 
     if (import.meta.client) {
@@ -97,10 +96,10 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function refreshTokens(): Promise<void> {
+  async function refreshTokens(): Promise<string | null> {
     if (!refreshToken.value) {
       clear();
-      return;
+      return null;
     }
 
     const { $api } = useNuxtApp();
@@ -111,6 +110,7 @@ export const useAuthStore = defineStore('auth', () => {
         { auth: 'refresh' },
       );
       setTokens(tokens);
+      return tokens.accessToken;
     } catch (error: unknown) {
       clear();
       throw error;

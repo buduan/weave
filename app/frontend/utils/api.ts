@@ -66,7 +66,9 @@ export interface ApiClientOptions {
   getAccessToken: () => string | null;
   /** 获取当前 Refresh Token */
   getRefreshToken: () => string | null;
-  /** Access Token 过期时的处理回调（预留，由 auth store 实现） */
+  /** 刷新 Access Token，成功后返回新 Token；失败应 reject（由 auth store 实现） */
+  refreshAccessToken: () => Promise<string | null>;
+  /** 登录态确定失效时的处理回调（清空状态并跳转登录页） */
   onAccessTokenExpired: () => void;
 }
 
@@ -99,23 +101,40 @@ export function createApiClient(options: ApiClientOptions) {
     return null;
   }
 
+  let refreshInFlight: Promise<string | null> | null = null;
+
+  /**
+   * 单飞（single-flight）刷新：并发 401 只发起一次真实刷新，
+   * 其余请求复用同一个 Promise，避免对 /auth/token/refresh 造成重放风暴。
+   * 失败被吞掉并返回 null，由调用方决定是否登出。
+   */
+  function refreshAccessTokenOnce(): Promise<string | null> {
+    if (!refreshInFlight) {
+      refreshInFlight = options.refreshAccessToken()
+        .catch(() => null)
+        .finally(() => { refreshInFlight = null; });
+    }
+    return refreshInFlight;
+  }
+
   /**
    * 类型安全的请求方法。
-   * 自动注入 Authorization header（按 auth 模式），自动解包 ApiResponse<T>。
+   * 自动注入 Authorization header（按 auth 模式），自动解包 ApiResponse<T>；
+   * access 模式下遇 401 会先尝试刷新 Access Token 并重放一次。
    */
   async function request<T>(
     url: string,
     opts: ApiRequestOptions = {},
   ): Promise<T> {
     const { auth = 'access', headers, ...rest } = opts;
-    const token = resolveToken(auth);
 
-    const finalHeaders = new Headers(headers);
-    if (token) {
-      finalHeaders.set('Authorization', `Bearer ${token}`);
-    }
+    async function attempt(): Promise<T> {
+      const token = resolveToken(auth);
+      const finalHeaders = new Headers(headers);
+      if (token) {
+        finalHeaders.set('Authorization', `Bearer ${token}`);
+      }
 
-    try {
       const response = await raw.raw<ApiResponse<T>>(url, {
         ...rest,
         headers: finalHeaders,
@@ -138,17 +157,29 @@ export function createApiClient(options: ApiClientOptions) {
         );
       }
       return envelope.data;
-    } catch (error) {
-      const apiError = toApiError(error);
-
-      // 预留：Access Token 过期处理（401 且使用的是 access 模式）
-      // 待后端确认 JWT 携带的信息后，可在此处实现更精细的过期判断
-      if (apiError.httpStatus === 401 && auth === 'access') {
-        options.onAccessTokenExpired();
-      }
-
-      throw apiError;
     }
+
+    async function execute(allowRefresh: boolean): Promise<T> {
+      try {
+        return await attempt();
+      } catch (error) {
+        const apiError = toApiError(error);
+
+        if (apiError.httpStatus === 401 && auth === 'access') {
+          // Access Token 过期：先尝试用 Refresh Token 续期，成功后重放一次；
+          // 续期失败或重放仍 401 时，登录态确定失效，交由 store 登出。
+          if (allowRefresh) {
+            const newToken = await refreshAccessTokenOnce();
+            if (newToken) return execute(false);
+          }
+          options.onAccessTokenExpired();
+        }
+
+        throw apiError;
+      }
+    }
+
+    return execute(true);
   }
 
   return {

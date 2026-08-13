@@ -8,6 +8,7 @@ export default defineNuxtPlugin(() => {
     baseURL: config.public.apiOrigin,
     getAccessToken: () => authStore.accessToken,
     getRefreshToken: () => authStore.refreshToken,
+    refreshAccessToken: () => authStore.refreshTokens(),
     onAccessTokenExpired: () => authStore.onAccessTokenExpired(),
   });
 
