@@ -16,7 +16,6 @@ import {
   createFormItemId,
   parseFormSchema,
   resolveLocalizedText,
-  validateFormSchemaExtensions,
 } from '@weave/utils';
 import { orderFormLocales } from './form-locales';
 import {
@@ -481,6 +480,11 @@ export function validateFormEditorSchema(
   });
 }
 
+/** 源码解析的最小可映射校验：仅保证可解析进编辑器，不做 Dataset 绑定与类型匹配校验。 */
+export function validateFormSourceSchema(schema: JsonSchemaObject): void {
+  parseFormSchema(schema, { mode: 'legacy' });
+}
+
 interface DatasetPanelLike {
   fields: DatasetFieldDefinition[];
 }
@@ -491,6 +495,6 @@ export function parseAndValidateFormSource(source: string): JsonSchemaObject {
   if (!schema || schema.type !== 'object' || schema.additionalProperties !== false) {
     throw new TypeError('Form Schema 必须是 type=object 且 additionalProperties=false 的对象。');
   }
-  validateFormSchemaExtensions(schema);
+  validateFormSourceSchema(schema);
   return schema;
 }

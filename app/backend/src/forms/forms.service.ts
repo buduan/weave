@@ -1096,12 +1096,13 @@ return redis.call('DEL', KEYS[1])`,
   }
 
   /**
-   * 在事务中准备 Form Schema：深拷贝、处理设备信息采集字段、校验定义、计算校验和。
+   * 在事务中准备 Form Schema：深拷贝、处理设备信息采集字段、结构校验、计算校验和。
+   * 草稿保存仅做最小可映射的结构校验；业务不变量在发布时由 validateDefinition 执行。
    */
   private async prepareFormSchema(
     tx: Prisma.TransactionClient,
-    dataset: Pick<Dataset, 'id' | 'subjectMode' | 'type'>,
-    dto: Pick<VersionDefinitionInput, 'schema' | 'defaultLocale' | 'nameI18n' | 'submissionAccess' | 'writeMode'>,
+    dataset: Pick<Dataset, 'id'>,
+    dto: Pick<VersionDefinitionInput, 'schema'>,
     userId: string,
   ): Promise<{ schema: Record<string, unknown>; checksum: string }> {
     let schema: Record<string, unknown>;
@@ -1113,7 +1114,7 @@ return redis.call('DEL', KEYS[1])`,
       );
     }
     await this.ensureCaptureFields(tx, dataset.id, schema, userId);
-    await this.validateDefinition(tx, dataset, schema, dto);
+    this.validator.validateStructure(schema);
     const checksum = await checksumJson(schema as JsonValue);
     return { schema, checksum };
   }

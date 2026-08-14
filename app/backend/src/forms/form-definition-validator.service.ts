@@ -55,6 +55,25 @@ export class FormDefinitionValidatorService {
   }
 
   /**
+   * 仅校验 Schema 结构可解析（最小可映射）：根约束 + AJV 编译 + x-form 扩展，
+   * 不校验 Dataset 绑定、字段映射或任何业务不变量。供草稿保存使用。
+   */
+  public validateStructure(schema: Record<string, unknown>): ReturnType<typeof parseFormSchema> {
+    if (schema.type !== 'object' || schema.additionalProperties !== false) {
+      throw new BadRequestException('Form Schema must be an object and reject additional properties');
+    }
+    try {
+      this.ajv.compile(schema);
+      // 平台扩展校验（x-form 命名空间、Form item ID 格式、i18n 等）。
+      return parseFormSchema(schema as JsonSchema);
+    } catch (error) {
+      throw new BadRequestException(
+        `Invalid Form Schema: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
    * 执行完整校验：
    * 1. Schema 结构合法性（AJV Draft 2020-12 方言 + x-form 扩展；不要求声明 $schema）
    * 2. Dataset 绑定一致性
@@ -65,20 +84,8 @@ export class FormDefinitionValidatorService {
    * 7. 必填字段覆盖检查（create_row 模式）
    */
   public validate(schema: Record<string, unknown>, context: DefinitionContext): void {
-    if (schema.type !== 'object' || schema.additionalProperties !== false) {
-      throw new BadRequestException('Form Schema must be an object and reject additional properties');
-    }
-    let parsed: ReturnType<typeof parseFormSchema>;
-    try {
-      this.ajv.compile(schema);
-      // 平台扩展校验（x-form 命名空间、Form item ID 格式、i18n 等）。
-      parsed = parseFormSchema(schema as JsonSchema);
-    } catch (error) {
-      throw new BadRequestException(
-        `Invalid Form Schema: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const rootExtension = parsed.rootExtension;
+    const parsed = this.validateStructure(schema);
+    const { rootExtension } = parsed;
     if (rootExtension.datasetId !== context.dataset.id) {
       throw new BadRequestException('Form Schema Dataset binding does not match the Form');
     }

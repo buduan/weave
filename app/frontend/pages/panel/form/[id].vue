@@ -77,6 +77,7 @@ import {
   setFormTitle,
   type FormConstraintKey,
   validateFormEditorSchema,
+  validateFormSourceSchema,
 } from '~/utils/form-editor-schema';
 import {
   getFormItemTemplate,
@@ -636,10 +637,17 @@ function savePayload(schemaOverride?: JsonSchemaObject): FormDraftDefinitionInpu
   };
 }
 
-async function saveDraft(schemaOverride?: JsonSchemaObject): Promise<boolean> {
+async function saveDraft(
+  schemaOverride?: JsonSchemaObject,
+  options: { skipDatasetValidation?: boolean } = {},
+): Promise<boolean> {
   if (mutationsDisabled.value || !definition.value) return false;
   try {
-    validateFormEditorSchema(schemaOverride ?? definition.value.schema, dataset.value);
+    if (options.skipDatasetValidation) {
+      validateFormSourceSchema(schemaOverride ?? definition.value.schema);
+    } else {
+      validateFormEditorSchema(schemaOverride ?? definition.value.schema, dataset.value);
+    }
   } catch (error) {
     mutationError.value = error instanceof Error ? error.message : String(error);
     return false;
@@ -772,7 +780,7 @@ async function validateAndSaveSource(): Promise<void> {
     sourceError.value = error instanceof Error ? error.message : String(error);
     return;
   }
-  if (!await saveDraft(parsed)) {
+  if (!await saveDraft(parsed, { skipDatasetValidation: true })) {
     sourceError.value = mutationError.value;
     return;
   }
