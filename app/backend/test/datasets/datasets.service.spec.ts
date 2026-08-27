@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   DatasetCollaboratorRole,
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetStatus,
   DatasetType,
@@ -15,6 +16,7 @@ import {
 
 import type { AuthenticatedActor } from '@weave/types';
 
+import { DatasetSchemaService } from '../../src/datasets/dataset-schema.service';
 import { DatasetsService } from '../../src/datasets/datasets.service';
 
 const actor: AuthenticatedActor = {
@@ -112,6 +114,7 @@ describe('Dataset mutation invariants', () => {
         key: 'name',
         name: 'Name',
         description: null,
+        dataType: DatasetFieldDataType.string,
         kind: DatasetFieldKind.text,
         valueSchema: { type: 'string' },
         config: {},
@@ -232,6 +235,7 @@ describe('Dataset mutation invariants', () => {
       key: 'new',
       name: 'New',
       description: null,
+      dataType: DatasetFieldDataType.string,
       kind: 'text',
       valueSchema: { type: 'string' },
       config: {},
@@ -296,5 +300,142 @@ describe('Dataset mutation invariants', () => {
       action: 'dataset.field.create',
       metadata: { datasetId: 'dataset-1', kind: DatasetFieldKind.text },
     }), tx);
+  });
+
+  it('converts single_select to multi_select when every active row is valid', async () => {
+    const existingField = {
+      id: 'field-1',
+      workspaceId: 1,
+      datasetId: 'dataset-1',
+      key: 'status',
+      name: 'Status',
+      description: null,
+      dataType: DatasetFieldDataType.string_array,
+      kind: DatasetFieldKind.single_select,
+      valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
+      config: { options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
+      required: false,
+      isSystemManaged: false,
+      systemKey: null,
+      relationTargetDatasetId: null,
+      relationCardinality: null,
+      position: 0,
+      revision: 1,
+      archivedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const updatedField = {
+      ...existingField,
+      kind: DatasetFieldKind.multi_select,
+      revision: 2,
+      valueSchema: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+    };
+    const tx = {
+      dataset: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      datasetRow: {
+        findMany: vi.fn().mockResolvedValue([{ id: 'row-ok', values: { 'field-1': ['one'] } }]),
+      },
+      datasetField: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findMany: vi.fn().mockResolvedValue([]),
+        findUniqueOrThrow: vi.fn().mockResolvedValue(updatedField),
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+    const prisma = {
+      dataset: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'dataset-1',
+          workspaceId: 1,
+          type: DatasetType.standard,
+          status: DatasetStatus.active,
+        }),
+      },
+      datasetField: { findUnique: vi.fn().mockResolvedValue(existingField) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const service = new DatasetsService(
+      prisma as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      new DatasetSchemaService(),
+    );
+    vi.spyOn(service, 'createDefinitionVersion').mockResolvedValue(undefined);
+
+    await expect(service.updateField(1, 'dataset-1', 'field-1', {
+      expectedDatasetRevision: 1,
+      expectedFieldRevision: 1,
+      kind: DatasetFieldKind.multi_select,
+    }, actor)).resolves.toMatchObject({ datasetRevision: 2 });
+    expect(tx.datasetField.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: DatasetFieldKind.multi_select }),
+    }));
+  });
+
+  it('rejects multi_select to single_select when a row has more than one value', async () => {
+    const existingField = {
+      id: 'field-1',
+      workspaceId: 1,
+      datasetId: 'dataset-1',
+      key: 'status',
+      name: 'Status',
+      description: null,
+      dataType: DatasetFieldDataType.string_array,
+      kind: DatasetFieldKind.multi_select,
+      valueSchema: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+      config: { options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
+      required: false,
+      isSystemManaged: false,
+      systemKey: null,
+      relationTargetDatasetId: null,
+      relationCardinality: null,
+      position: 0,
+      revision: 1,
+      archivedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const tx = {
+      dataset: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      datasetRow: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'row-bad', values: { 'field-1': ['one', 'two'] } },
+        ]),
+      },
+      datasetField: {
+        updateMany: vi.fn(),
+        findMany: vi.fn(),
+        findUniqueOrThrow: vi.fn(),
+      },
+    };
+    const prisma = {
+      dataset: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'dataset-1',
+          workspaceId: 1,
+          type: DatasetType.standard,
+          status: DatasetStatus.active,
+        }),
+      },
+      datasetField: { findUnique: vi.fn().mockResolvedValue(existingField) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const service = new DatasetsService(
+      prisma as never,
+      { record: vi.fn() } as never,
+      new DatasetSchemaService(),
+    );
+
+    const error = await service.updateField(1, 'dataset-1', 'field-1', {
+      expectedDatasetRevision: 1,
+      expectedFieldRevision: 1,
+      kind: DatasetFieldKind.single_select,
+    }, actor).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toEqual({
+      message: 'Dataset field kind conversion rejected because existing rows are invalid',
+      invalidRowIds: ['row-bad'],
+    });
+    expect(tx.datasetField.updateMany).not.toHaveBeenCalled();
   });
 });

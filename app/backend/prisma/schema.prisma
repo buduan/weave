@@ -276,11 +276,22 @@ enum DatasetCollaboratorRole {
   maintainer
 }
 
+enum DatasetFieldDataType {
+  string
+  number
+  boolean
+  string_array
+  json
+  relation
+}
+
 enum DatasetFieldKind {
   text
   long_text
   number
-  boolean
+  percent
+  currency
+  checkbox
   date
   time
   datetime
@@ -288,6 +299,8 @@ enum DatasetFieldKind {
   url
   single_select
   multi_select
+  cascader
+  tags
   json
   relation
 }
@@ -414,6 +427,7 @@ model DatasetField {
   key                     String               @db.VarChar(64)
   name                    String               @db.VarChar(128)
   description             String?
+  dataType                DatasetFieldDataType
   kind                    DatasetFieldKind
   valueSchema             Json
   config                  Json                 @default("{}")

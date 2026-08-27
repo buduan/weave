@@ -24,6 +24,7 @@ import type {
 } from '@weave/types';
 import {
   cloneJson,
+  isChoiceKind,
   normalizeDatasetChoiceConfig,
   parseFormSchema,
   resolveLocalizedText,
@@ -173,7 +174,7 @@ const editorChoiceOptions = computed<Record<string, DatasetChoiceOption[]>>(() =
     return Object.fromEntries(parseFormSchema(definition.value.schema, { mode: 'legacy' }).items
       .flatMap((item) => {
         const field = fields.get(item.extension.datasetFieldId);
-        if (!field || (field.kind !== 'single_select' && field.kind !== 'multi_select')) return [];
+        if (!field || !isChoiceKind(field.kind)) return [];
         const draft = choiceDrafts.value[field.id];
         try {
           const options = draft

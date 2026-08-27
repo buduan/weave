@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetStatus,
   DatasetType,
@@ -123,6 +124,7 @@ describe.sequential('database-backed Form/Dataset lock barriers', () => {
         datasetId: sourceDataset.id,
         key: 'relation',
         name: 'Relation',
+        dataType: DatasetFieldDataType.relation,
         kind: DatasetFieldKind.relation,
         valueSchema: { type: 'string' },
         relationTargetDatasetId: targetDataset.id,
@@ -136,8 +138,9 @@ describe.sequential('database-backed Form/Dataset lock barriers', () => {
         datasetId: sourceDataset.id,
         key: 'choice',
         name: 'Choice',
+        dataType: DatasetFieldDataType.string_array,
         kind: DatasetFieldKind.single_select,
-        valueSchema: { type: 'string' },
+        valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
         config: { options: [{ value: 'kept', label: 'Kept' }] },
         position: 1,
       },
@@ -352,7 +355,7 @@ describe.sequential('database-backed Form/Dataset lock barriers', () => {
         data: {
           workspaceId: fixture.workspaceId,
           datasetId: fixture.sourceDatasetId,
-          values: { [fixture.choiceFieldId]: 'kept' },
+          values: { [fixture.choiceFieldId]: ['kept'] },
         },
       });
     });

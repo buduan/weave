@@ -2,7 +2,6 @@ import type {
   DatasetAggregateOperation,
   DatasetAggregateRule,
   DatasetFieldDefinition,
-  DatasetFieldKind,
   DatasetFilterOperator,
   DatasetFilterRule,
   DatasetGroupSummary,
@@ -18,6 +17,7 @@ import {
   normalizeDatasetChoiceConfig,
   resolveDatasetChoicePathLabels,
 } from './dataset-choices';
+import { isChoiceKind, isStringArrayDataType } from './dataset-field-types';
 import { canonicalizeJson } from './json';
 import { isEmptyJsonValue } from './json-guards';
 
@@ -125,17 +125,17 @@ export function isDatasetQueryEmpty(query: DatasetTableQuery): boolean {
 export function getDatasetFilterOperators(
   field: DatasetFieldDefinition,
 ): DatasetFilterOperatorOption[] {
-  if (field.kind === 'boolean') {
+  if (field.dataType === 'boolean') {
     return [{ label: '等于', value: 'equals', requiresValue: true }];
   }
-  if (['number', 'date', 'time', 'datetime'].includes(field.kind)) {
+  if (field.dataType === 'number' || ['date', 'time', 'datetime'].includes(field.kind)) {
     return ORDERED_OPERATORS;
   }
-  if (field.kind === 'multi_select'
-    || (field.kind === 'relation' && field.relationCardinality === 'many')) {
+  if (isStringArrayDataType(field.dataType)
+    || (field.dataType === 'relation' && field.relationCardinality === 'many')) {
     return MULTI_VALUE_OPERATORS;
   }
-  if (field.kind === 'single_select' || field.kind === 'relation') {
+  if (field.dataType === 'relation') {
     return SINGLE_VALUE_OPERATORS;
   }
   return TEXT_OPERATORS;
@@ -145,8 +145,8 @@ export function getDatasetFieldOptions(
   field: DatasetFieldDefinition,
   relationOptions: Record<string, DatasetOption[]> = {},
 ): DatasetOption[] {
-  if (field.kind === 'relation') return relationOptions[field.id] ?? [];
-  if (field.kind !== 'single_select' && field.kind !== 'multi_select') return [];
+  if (field.dataType === 'relation') return relationOptions[field.id] ?? [];
+  if (!isChoiceKind(field.kind)) return [];
   try {
     const choiceConfig = normalizeDatasetChoiceConfig(field.kind, field.config);
     return choiceConfig.options.map(({ label, value }) => ({ label, value }));
@@ -158,14 +158,15 @@ export function getDatasetFieldOptions(
 export function isDatasetFieldGroupable(field: DatasetFieldDefinition): boolean {
   return field.kind !== 'long_text'
     && field.kind !== 'multi_select'
+    && field.kind !== 'tags'
     && field.kind !== 'json'
-    && !(field.kind === 'relation' && field.relationCardinality === 'many');
+    && !(field.dataType === 'relation' && field.relationCardinality === 'many');
 }
 
 export function getDatasetAggregateOperations(
   field: DatasetFieldDefinition,
 ): DatasetAggregateOperation[] {
-  if (field.kind === 'number') return ['sum', 'avg', 'min', 'max', 'count_non_empty'];
+  if (field.dataType === 'number') return ['sum', 'avg', 'min', 'max', 'count_non_empty'];
   if (field.kind === 'date' || field.kind === 'time' || field.kind === 'datetime') {
     return ['min', 'max', 'count_non_empty'];
   }
@@ -176,17 +177,20 @@ export function getDatasetCellValue(
   row: DatasetRowData,
   field: DatasetFieldDefinition,
 ): JsonValue {
-  return field.kind === 'relation'
+  return field.dataType === 'relation'
     ? row.relations[field.id] ?? null
     : row.values[field.id] ?? null;
 }
 
-function normalizeComparableValue(value: JsonValue, kind: DatasetFieldKind): number | string {
-  if (kind === 'number') {
+function normalizeComparableValue(
+  value: JsonValue,
+  field: DatasetFieldDefinition,
+): number | string {
+  if (field.dataType === 'number') {
     const numberValue = typeof value === 'number' ? value : Number(value);
     return Number.isNaN(numberValue) ? Number.NEGATIVE_INFINITY : numberValue;
   }
-  if (kind === 'boolean') return value === true ? 1 : 0;
+  if (field.dataType === 'boolean') return value === true ? 1 : 0;
   if (typeof value === 'object' && value !== null) return canonicalizeJson(value);
   return String(value ?? '').toLocaleLowerCase();
 }
@@ -216,8 +220,8 @@ function matchesFilter(
     if (rule.operator === 'contains_all') return hasAll;
     return !hasAny;
   }
-  const left = normalizeComparableValue(cellValue, field.kind);
-  const right = normalizeComparableValue(filterValue, field.kind);
+  const left = normalizeComparableValue(cellValue, field);
+  const right = normalizeComparableValue(filterValue, field);
   if (rule.operator === 'contains') return String(left).includes(String(right));
   if (rule.operator === 'equals') return left === right;
   if (rule.operator === 'not_equals') return left !== right;
@@ -228,14 +232,18 @@ function matchesFilter(
   return true;
 }
 
-function compareValues(left: JsonValue, right: JsonValue, kind: DatasetFieldKind): number {
+function compareValues(
+  left: JsonValue,
+  right: JsonValue,
+  field: DatasetFieldDefinition,
+): number {
   const leftEmpty = isEmptyJsonValue(left);
   const rightEmpty = isEmptyJsonValue(right);
   if (leftEmpty && rightEmpty) return 0;
   if (leftEmpty) return 1;
   if (rightEmpty) return -1;
-  const normalizedLeft = normalizeComparableValue(left, kind);
-  const normalizedRight = normalizeComparableValue(right, kind);
+  const normalizedLeft = normalizeComparableValue(left, field);
+  const normalizedRight = normalizeComparableValue(right, field);
   if (typeof normalizedLeft === 'number' && typeof normalizedRight === 'number') {
     return normalizedLeft - normalizedRight;
   }
@@ -259,10 +267,10 @@ export function formatDatasetFieldValue(
   value: JsonValue,
   locale = 'zh-CN',
 ): string {
-  if ((field.kind === 'single_select' || field.kind === 'multi_select')) {
+  if (isChoiceKind(field.kind)) {
     try {
       const config = normalizeDatasetChoiceConfig(field.kind, field.config);
-      if (config.optionMode === 'cascader') {
+      if (config.optionMode === 'cascader' || field.kind === 'cascader') {
         return resolveDatasetChoicePathLabels(config.options, value, locale)?.join(' / ')
           ?? formatDatasetCellValue(value);
       }
@@ -286,27 +294,32 @@ export function parseDatasetFieldInputValue(
   field: DatasetFieldDefinition,
   input: unknown,
 ): { valid: boolean; value: JsonValue } {
-  if (field.kind === 'boolean') return { value: input === true, valid: true };
-  if (field.kind === 'number') {
+  if (field.dataType === 'boolean') return { value: input === true, valid: true };
+  if (field.dataType === 'number') {
     if (input === '' || input === null || input === undefined) {
       return { value: null, valid: !field.required };
     }
     const value = Number(input);
     return { value: Number.isNaN(value) ? null : value, valid: !Number.isNaN(value) };
   }
-  if (field.kind === 'multi_select'
-    || (field.kind === 'relation' && field.relationCardinality === 'many')) {
-    const value = Array.isArray(input) ? input.map(String) : [];
-    if (field.kind === 'multi_select') {
+  if (isStringArrayDataType(field.dataType)
+    || (field.dataType === 'relation' && field.relationCardinality === 'many')) {
+    let value: string[];
+    if (typeof input === 'string' && field.kind === 'single_select') {
+      value = input === '' ? [] : [input];
+    } else if (Array.isArray(input)) {
+      value = input.map(String);
+    } else {
+      value = [];
+    }
+    if (field.kind === 'cascader') {
       try {
         const config = normalizeDatasetChoiceConfig(field.kind, field.config);
-        if (config.optionMode === 'cascader') {
-          return {
-            value,
-            valid: (!field.required && value.length === 0)
-              || isCompleteChoicePath(config.options, value),
-          };
-        }
+        return {
+          value,
+          valid: (!field.required && value.length === 0)
+            || isCompleteChoicePath(config.options, value),
+        };
       } catch {
         return { value, valid: false };
       }
@@ -352,7 +365,7 @@ export function applyDatasetQuery(
         const grouped = compareValues(
           getDatasetCellValue(leftEntry.row, groupField),
           getDatasetCellValue(rightEntry.row, groupField),
-          groupField.kind,
+          groupField,
         );
         if (grouped !== 0) return grouped;
       }
@@ -363,7 +376,7 @@ export function applyDatasetQuery(
         const compared = compareValues(
           getDatasetCellValue(leftEntry.row, field),
           getDatasetCellValue(rightEntry.row, field),
-          field.kind,
+          field,
         );
         return rule.direction === 'asc' ? compared : -compared;
       }, 0);
@@ -384,7 +397,7 @@ function aggregateRows(
     .filter((value) => !isEmptyJsonValue(value));
   if (rule.operation === 'count_non_empty') return values.length;
   if (values.length === 0) return null;
-  if (field.kind === 'number') {
+  if (field.dataType === 'number') {
     const numbers = values.map(Number).filter(Number.isFinite);
     if (numbers.length === 0) return null;
     const sum = numbers.reduce((total, value) => total + value, 0);

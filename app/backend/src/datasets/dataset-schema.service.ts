@@ -3,8 +3,9 @@ import type { DatasetField, Prisma } from '@prisma/client';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
-import type { DatasetChoiceOption, JsonSchema } from '@weave/types';
+import type { DatasetChoiceOption, DatasetFieldKind, JsonSchema } from '@weave/types';
 import {
+  isChoiceKind,
   isCompleteChoicePath,
   normalizeDatasetChoiceConfig,
   stripChoiceMembershipSchema,
@@ -92,30 +93,8 @@ export class DatasetSchemaService {
       if (field.kind === 'relation') {
         throw new BadRequestException(`Relation field must be supplied under relations: ${fieldId}`);
       }
-      this.assertJsonValue(value, `values.${fieldId}`);
-      const choiceConfig = field.kind === 'single_select' || field.kind === 'multi_select'
-        ? this.parseChoiceConfig(field.kind, field.config, fieldId)
-        : null;
-      const valueSchema = choiceConfig?.hasOptions
-        ? stripChoiceMembershipSchema(field.valueSchema as JsonSchema)
-        : field.valueSchema;
-      const validate = this.ajv.compile(valueSchema as object);
-      if (!validate(value)) {
-        throw new BadRequestException({
-          message: `Invalid value for Dataset field: ${fieldId}`,
-          errors: validate.errors,
-        });
-      }
-      if (choiceConfig?.hasOptions) {
-        this.validateChoiceValue(
-          fieldId,
-          field.kind as 'multi_select' | 'single_select',
-          choiceConfig.optionMode,
-          choiceConfig.options,
-          value,
-        );
-      }
-      resultingValues[fieldId] = value;
+      this.assertFieldValue(field, value);
+      resultingValues[fieldId] = value as Prisma.InputJsonValue;
     });
 
     // ---- 校验关联字段值 ----
@@ -158,8 +137,35 @@ export class DatasetSchemaService {
     return { relations, values: resultingValues };
   }
 
+  /** 校验单个字段值（AJV + 选项成员）。供行写入与 kind 转换扫描共用。 */
+  public assertFieldValue(field: DatasetField, value: unknown): void {
+    this.assertJsonValue(value, `values.${field.id}`);
+    const choiceConfig = isChoiceKind(field.kind)
+      ? this.parseChoiceConfig(field.kind, field.config, field.id)
+      : null;
+    const valueSchema = choiceConfig?.hasOptions
+      ? stripChoiceMembershipSchema(field.valueSchema as JsonSchema)
+      : field.valueSchema;
+    const validate = this.ajv.compile(valueSchema as object);
+    if (!validate(value)) {
+      throw new BadRequestException({
+        message: `Invalid value for Dataset field: ${field.id}`,
+        errors: validate.errors,
+      });
+    }
+    if (choiceConfig?.hasOptions) {
+      this.validateChoiceValue(
+        field.id,
+        field.kind,
+        choiceConfig.optionMode,
+        choiceConfig.options,
+        value,
+      );
+    }
+  }
+
   private parseChoiceConfig(
-    kind: 'multi_select' | 'single_select',
+    kind: DatasetFieldKind,
     config: Prisma.JsonValue,
     fieldId: string,
   ): ReturnType<typeof normalizeDatasetChoiceConfig> {
@@ -174,7 +180,7 @@ export class DatasetSchemaService {
 
   private validateChoiceValue(
     fieldId: string,
-    kind: 'multi_select' | 'single_select',
+    kind: DatasetFieldKind,
     optionMode: 'cascader' | 'flat',
     options: readonly DatasetChoiceOption[],
     value: unknown,
@@ -182,23 +188,23 @@ export class DatasetSchemaService {
     if (options.length === 0) {
       throw new BadRequestException(`Dataset field has no current choices: ${fieldId}`);
     }
-    const acceptedValues = new Set(options.map((option) => option.value));
-    if (kind === 'single_select') {
-      if (typeof value !== 'string' || !acceptedValues.has(value)) {
-        throw new BadRequestException(`Unknown choice for Dataset field: ${fieldId}`);
-      }
-      return;
-    }
-    if (optionMode === 'cascader') {
+    if (kind === 'cascader' || optionMode === 'cascader') {
       if (!isCompleteChoicePath(options, value)) {
         throw new BadRequestException(`Incomplete or unknown choice path for Dataset field: ${fieldId}`);
       }
       return;
     }
     if (!Array.isArray(value)
-      || !value.every((item) => typeof item === 'string' && acceptedValues.has(item))
+      || !value.every((item) => typeof item === 'string')
       || new Set(value).size !== value.length) {
       throw new BadRequestException(`Invalid choices for Dataset field: ${fieldId}`);
+    }
+    if (kind === 'single_select' && value.length > 1) {
+      throw new BadRequestException(`Invalid choices for Dataset field: ${fieldId}`);
+    }
+    const acceptedValues = new Set(options.map((option) => option.value));
+    if (!value.every((item) => acceptedValues.has(item))) {
+      throw new BadRequestException(`Unknown choice for Dataset field: ${fieldId}`);
     }
   }
 

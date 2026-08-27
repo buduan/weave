@@ -2,6 +2,7 @@ import type { ErrorObject } from 'ajv/dist/2020';
 
 import type {
   DatasetChoiceOption,
+  DatasetFieldDataType,
   DatasetFieldKind,
   FormItemId,
   JsonSchema,
@@ -16,6 +17,7 @@ import {
   resolveDatasetChoiceLabels,
   stripChoiceMembershipSchema,
 } from './dataset-choices';
+import { isChoiceKind } from './dataset-field-types';
 import { cloneJson } from './json-clone';
 import { createFormAjv } from './form-ajv';
 import { isRecord } from './json-guards';
@@ -30,6 +32,7 @@ export interface CurrentFormDatasetField {
   archivedAt: unknown | null;
   config: unknown;
   datasetId: string;
+  dataType: DatasetFieldDataType;
   id: string;
   isSystemManaged: boolean;
   kind: DatasetFieldKind;
@@ -76,12 +79,13 @@ function appendAllOfConstraint(
   constraint: JsonSchema,
 ): void {
   const existing = Array.isArray(property.allOf) ? property.allOf : [];
+  // eslint-disable-next-line no-param-reassign -- project onto a detached clone
   property.allOf = [...existing, cloneJson(constraint)] as JsonValue;
 }
 
 function projectFlatChoice(
   property: JsonSchemaObject,
-  kind: Extract<DatasetFieldKind, 'multi_select' | 'single_select'>,
+  kind: Extract<DatasetFieldKind, 'multi_select' | 'single_select' | 'tags'>,
   options: readonly DatasetChoiceOption[],
 ): void {
   const values = options.map((option) => option.value);
@@ -89,16 +93,15 @@ function projectFlatChoice(
     appendAllOfConstraint(property, false);
     return;
   }
-  if (kind === 'single_select') {
-    property.enum = values;
-    return;
-  }
   const items = isRecord(property.items)
     ? cloneJson(property.items) as JsonSchemaObject
     : { type: 'string' } as JsonSchemaObject;
   items.enum = values;
+  /* eslint-disable no-param-reassign -- project onto a detached clone */
   property.items = items;
   property.uniqueItems = true;
+  if (kind === 'single_select') property.maxItems = 1;
+  /* eslint-enable no-param-reassign */
 }
 
 function projectCascaderChoice(
@@ -106,11 +109,13 @@ function projectCascaderChoice(
   options: readonly DatasetChoiceOption[],
 ): void {
   const paths = enumerateChoiceLeafPaths(options);
+  /* eslint-disable no-param-reassign -- project onto a detached clone */
   property.items = isRecord(property.items)
     ? { ...property.items, type: 'string' }
     : { type: 'string' };
   if (paths.length === 0) appendAllOfConstraint(property, false);
   else property.enum = paths;
+  /* eslint-enable no-param-reassign */
 }
 
 /**
@@ -143,7 +148,7 @@ export function projectCurrentFormFields(
     usedFieldIds.add(field.id);
     fieldsByItemId.set(item.id, field);
 
-    const choiceField = field.kind === 'single_select' || field.kind === 'multi_select';
+    const choiceField = isChoiceKind(field.kind);
     const choiceConfig = choiceField
       ? normalizeDatasetChoiceConfig(field.kind, field.config)
       : null;
@@ -155,7 +160,7 @@ export function projectCurrentFormFields(
       : cloneJson(field.valueSchema);
     const property = cloneJson(authorProperty);
 
-    if (field.kind === 'relation') {
+    if (field.dataType === 'relation') {
       if (field.relationCardinality === 'one') {
         appendAllOfConstraint(property, { type: 'string' });
       } else if (field.relationCardinality === 'many') {
@@ -183,7 +188,11 @@ export function projectCurrentFormFields(
           configurationInvalidItemIds.push(item.id);
         }
       } else {
-        projectFlatChoice(property, field.kind as 'multi_select' | 'single_select', choiceConfig.options);
+        projectFlatChoice(
+          property,
+          field.kind as 'multi_select' | 'single_select' | 'tags',
+          choiceConfig.options,
+        );
         if (item.required && choiceConfig.options.length === 0) {
           configurationInvalidItemIds.push(item.id);
         }

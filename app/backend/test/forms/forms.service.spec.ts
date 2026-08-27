@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetStatus,
   DatasetSubjectMode,
@@ -208,7 +209,7 @@ describe('Form draft aggregate ordering', () => {
       form: { findUnique: vi.fn().mockResolvedValue(form) },
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
     };
-    const validator = { validate: vi.fn() };
+    const validator = { validate: vi.fn(), validateStructure: vi.fn() };
     const audit = { record: vi.fn() };
     const service = new FormsService(
       prisma as never,
@@ -240,10 +241,9 @@ describe('Form draft aggregate ordering', () => {
       'dataset-read',
       'form-read',
     ]);
-    expect(events.indexOf('field-read')).toBeGreaterThan(events.indexOf('form-lock'));
     const queries = tx.$queryRaw.mock.calls.map(([query]) => query as Sql);
     expect(queries.every((query) => query.strings.join('').includes('FOR UPDATE'))).toBe(true);
-    expect(validator.validate).toHaveBeenCalledTimes(1);
+    expect(validator.validateStructure).toHaveBeenCalledTimes(1);
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
       action: 'form.draft.update',
     }), tx);
@@ -551,6 +551,7 @@ describe('Published Form filling projection', () => {
             id: 'field-country-source',
             datasetId: 'dataset-public',
             archivedAt: null,
+            dataType: DatasetFieldDataType.string,
             kind: DatasetFieldKind.text,
             valueSchema: { type: 'string' },
             config: {},
@@ -562,6 +563,7 @@ describe('Published Form filling projection', () => {
             id: 'field-city',
             datasetId: 'dataset-public',
             archivedAt: null,
+            dataType: DatasetFieldDataType.relation,
             kind: DatasetFieldKind.relation,
             valueSchema: { type: 'string' },
             config: {},

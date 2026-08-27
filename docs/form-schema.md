@@ -75,7 +75,7 @@ q_<UUID v4>
 | 值类型 | `type`（如 `string`、`array`、`number`、`boolean`） |
 | 字符串约束 | `minLength`、`maxLength`、`format`、`pattern` |
 | 数值约束 | `minimum`、`maximum` 等 |
-| 单选/多选选项 | `oneOf` + 子项 `const`；多选时配合 `type: "array"` 与 `items` |
+| 单选/多选选项 | `oneOf` + 子项 `const`；`type: "array"` 与 `items`；单选再加 `maxItems: 1` |
 | 默认值 | `default` |
 | 必填 | 根级 `required` 数组（不要依赖 property 内的 required 语义替代根级列表） |
 
@@ -83,7 +83,9 @@ q_<UUID v4>
 
 ```json
 {
-  "type": "string",
+  "type": "array",
+  "items": { "type": "string" },
+  "maxItems": 1,
   "oneOf": [
     {
       "const": "engineering",
@@ -150,7 +152,7 @@ Item 扩展允许的键：
 | `options.labelFieldId` | 关联字段选项的展示标签字段。 |
 | `options.filter` | 关联选项筛选（见下节）。 |
 
-前端组件映射见 `app/frontend/components/form/component-map.ts`。`widget` 影响展示；值校验仍以标准 JSON Schema 为准。
+前端组件映射见 `app/frontend/components/form/component-map.ts`。`widget` 只影响展示；值的 JSON `type` 跟随所绑 Dataset 列的存储类型，不跟随 `widget` 或列的 `kind`。绑定矩阵见 [`dataset-form-field-types.md`](dataset-form-field-types.md)。值校验仍以标准 JSON Schema 为准。
 
 ## `availableIf` 条件表达式
 
@@ -327,7 +329,9 @@ token 和 `expectedRevision`。锁丢失后页面保留未保存内容但禁用�
       }
     },
     "q_33333333-3333-4333-8333-333333333333": {
-      "type": "string",
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 1,
       "oneOf": [
         {
           "const": "engineering",

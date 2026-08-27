@@ -140,7 +140,7 @@ export function useDatasetEditor(datasetId: string) {
       )),
       { ...coordinates, status: 'owned' },
     ];
-    if (field.kind === 'relation' && !relationOptions.value[field.id]) {
+    if (field.dataType === 'relation' && !relationOptions.value[field.id]) {
       // eslint-disable-next-line @typescript-eslint/no-use-before-define
       loadRelationOptions(field.id).catch(() => undefined);
     }
@@ -155,7 +155,7 @@ export function useDatasetEditor(datasetId: string) {
   async function commitCell(payload: DatasetCellCommitPayload): Promise<void> {
     const field = fields.value.find((item) => item.id === payload.fieldId);
     if (!field || field.isSystemManaged || !capabilities.value.canUpdateRows) return;
-    if (field.kind === 'relation' && relationOptionStates.value[field.id]?.forbidden) return;
+    if (field.dataType === 'relation' && relationOptionStates.value[field.id]?.forbidden) return;
     setMutation({ ...payload, status: 'pending' });
     const body = createDatasetCellUpdateRequest(field, payload);
     try {

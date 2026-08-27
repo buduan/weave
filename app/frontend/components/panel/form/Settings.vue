@@ -17,6 +17,10 @@ import type {
   RelationFilterOperator,
 } from '@weave/types';
 import { relationFilterOperators } from '@weave/types';
+import {
+  dataTypeOfKind,
+  defaultKindForWidget,
+} from '@weave/utils';
 import { computed, ref, shallowRef } from '#imports';
 import {
   createDatasetFieldConfig,
@@ -150,7 +154,7 @@ const relationFilter = computed(() => relationOptions.value?.filter);
 const relationGroup = computed<'all' | 'any'>(() => (relationFilter.value?.any ? 'any' : 'all'));
 const relationConditions = computed(() => relationFilter.value?.[relationGroup.value] ?? []);
 const relationFieldItems = computed(() => (props.relationDataset?.fields ?? [])
-  .filter((field) => !field.archivedAt && !field.isSystemManaged && field.kind !== 'relation')
+  .filter((field) => !field.archivedAt && !field.isSystemManaged && field.dataType !== 'relation')
   .map((field) => ({ label: `${field.name} · ${field.key}`, value: field.id })));
 const relationFilterOperatorItems = relationFilterOperators
   .map((value) => ({ label: value, value }));
@@ -166,13 +170,26 @@ const fieldKindItems: Array<{ label: string; value: DatasetFieldKind }> = [
   { label: '单行文本', value: 'text' },
   { label: '多行文本', value: 'long_text' },
   { label: '数字', value: 'number' },
-  { label: '布尔值', value: 'boolean' },
+  { label: '百分数', value: 'percent' },
+  { label: '货币', value: 'currency' },
+  { label: '复选框', value: 'checkbox' },
+  { label: '日期', value: 'date' },
+  { label: '时间', value: 'time' },
+  { label: '日期时间', value: 'datetime' },
+  { label: '邮箱', value: 'email' },
+  { label: '网址', value: 'url' },
   { label: '单选', value: 'single_select' },
   { label: '多选', value: 'multi_select' },
+  { label: '级联', value: 'cascader' },
+  { label: '标签', value: 'tags' },
 ];
-const createFieldKindItems = computed(() => fieldKindItems.filter((item) => (
-  selectedTemplate.value?.compatibleDatasetKinds.includes(item.value)
-)));
+const createFieldKindItems = computed(() => {
+  const widget = selectedTemplate.value?.widget;
+  const dataTypes = selectedTemplate.value?.compatibleDataTypes ?? [];
+  const preferred = widget ? defaultKindForWidget[widget] : undefined;
+  return fieldKindItems.filter((item) => dataTypes.includes(dataTypeOfKind(item.value)))
+    .sort((left, right) => Number(right.value === preferred) - Number(left.value === preferred));
+});
 const captureItems = [
   ['browser', '浏览器'],
   ['operatingSystem', '操作系统'],
@@ -338,18 +355,12 @@ function submitCreateField(): void {
     return;
   }
   const { key, kind, name } = createFieldModel.value;
-  let valueSchema: JsonSchemaObject = { type: 'string' };
-  if (kind === 'number') valueSchema = { type: 'number' };
-  if (kind === 'boolean') valueSchema = { type: 'boolean' };
-  if (kind === 'multi_select') valueSchema = { type: 'array', items: { type: 'string' } };
-  const config = createDatasetFieldConfig(selectedTemplate.value?.widget ?? 'input', kind);
   emit('createField', {
     datasetId: props.dataset.id,
     key: key.trim(),
     name: name.trim(),
     kind,
-    valueSchema,
-    config,
+    config: createDatasetFieldConfig(kind),
     required: false,
   });
   createFieldOpen.value = false;
@@ -720,7 +731,7 @@ function submitCreateField(): void {
           v-if="
             selectedTemplate.settings.choices
               && selectedDatasetField
-              && selectedDatasetField.kind !== 'relation'
+              && selectedDatasetField.dataType !== 'relation'
           "
           :options="choiceOptions"
           :locale="activeLocale"
@@ -740,7 +751,7 @@ function submitCreateField(): void {
         />
 
         <div
-          v-if="selectedDatasetField?.kind === 'relation'"
+          v-if="selectedDatasetField?.dataType === 'relation'"
           class="space-y-3 rounded-xl border border-default p-3"
         >
           <div>

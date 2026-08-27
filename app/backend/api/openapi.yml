@@ -1269,14 +1269,15 @@ components:
     DatasetField:
       type: object
       additionalProperties: false
-      required: [id, datasetId, key, name, description, kind, valueSchema, config, required, isSystemManaged, systemKey, relationTargetDatasetId, relationCardinality, position, revision, archivedAt]
+      required: [id, datasetId, key, name, description, dataType, kind, valueSchema, config, required, isSystemManaged, systemKey, relationTargetDatasetId, relationCardinality, position, revision, archivedAt]
       properties:
         id: { type: string }
         datasetId: { type: string }
         key: { type: string }
         name: { type: string }
         description: { type: [string, 'null'] }
-        kind: { type: string, enum: [text, long_text, number, boolean, date, time, datetime, email, url, single_select, multi_select, json, relation] }
+        dataType: { type: string, enum: [string, number, boolean, 'string[]', json, relation] }
+        kind: { type: string, enum: [text, long_text, number, percent, currency, checkbox, date, time, datetime, email, url, single_select, multi_select, cascader, tags, json, relation] }
         valueSchema: {}
         config: { type: object, additionalProperties: true }
         required: { type: boolean }
@@ -1355,7 +1356,7 @@ components:
     CreateDatasetFieldRequest:
       type: object
       additionalProperties: false
-      required: [expectedDatasetRevision, key, name, kind, valueSchema]
+      required: [expectedDatasetRevision, key, name, kind]
       properties:
         expectedDatasetRevision: { type: integer, minimum: 1 }
         key: { type: string, pattern: '^[a-z][a-z0-9_]*$', maxLength: 64 }
@@ -1377,6 +1378,7 @@ components:
         expectedFieldRevision: { type: integer, minimum: 1 }
         name: { type: string, minLength: 1, maxLength: 128 }
         description: { type: [string, 'null'] }
+        kind: { $ref: '#/components/schemas/DatasetField/properties/kind' }
         valueSchema: {}
         config: { type: object, additionalProperties: true }
         required: { type: boolean }

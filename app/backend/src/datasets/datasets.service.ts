@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   DatasetCollaboratorRole,
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetStatus,
   DatasetType,
@@ -25,8 +26,13 @@ import type {
   JsonSchema,
 } from '@weave/types';
 import {
+  dataTypeOfKind,
   hasChoiceMembershipSchema,
+  isChoiceKind,
   normalizeDatasetChoiceConfig,
+  toApiDataType,
+  toPrismaDataType,
+  valueSchemaForField,
 } from '@weave/utils';
 
 import { AuditService } from '../audit/audit.service';
@@ -129,6 +135,7 @@ export class DatasetsService {
             key: true,
             name: true,
             description: true,
+            dataType: true,
             kind: true,
             valueSchema: true,
             config: true,
@@ -209,6 +216,7 @@ export class DatasetsService {
                   {
                     key: 'applicant_name',
                     name: 'Applicant name',
+                    dataType: DatasetFieldDataType.string,
                     kind: DatasetFieldKind.text,
                     valueSchema: { type: 'string', minLength: 1, maxLength: 128 },
                     required: true,
@@ -219,6 +227,7 @@ export class DatasetsService {
                   {
                     key: 'applicant_email',
                     name: 'Applicant email',
+                    dataType: DatasetFieldDataType.string,
                     kind: DatasetFieldKind.email,
                     valueSchema: { type: 'string', format: 'email', maxLength: 320 },
                     required: true,
@@ -450,11 +459,11 @@ export class DatasetsService {
     this.assertActive(dataset.status);
     this.assertTypeCapability(dataset.type, 'fields');
     // 提前编译 value schema，失败时不碰数据库。
-    const valueSchema = this.schemas.assertFieldSchema(dto.valueSchema);
+    const valueSchema = this.schemas.assertFieldSchema(valueSchemaForField(dto.kind));
     const config = this.normalizeChoiceConfigForWrite(
       dto.kind,
       dto.config,
-      dto.valueSchema as JsonSchema,
+      valueSchemaForField(dto.kind),
       true,
     );
     await this.assertRelationConfiguration(workspaceId, dto);
@@ -477,6 +486,7 @@ export class DatasetsService {
             key: dto.key,
             name: dto.name,
             description: dto.description,
+            dataType: toPrismaDataType(dataTypeOfKind(dto.kind)),
             kind: dto.kind,
             valueSchema,
             config,
@@ -532,20 +542,32 @@ export class DatasetsService {
       dto.valueSchema !== undefined
       || dto.config !== undefined
       || dto.required !== undefined
+      || dto.kind !== undefined
     )) {
       throw new ConflictException('Protected system field definition cannot be changed');
     }
-    const valueSchema = dto.valueSchema === undefined
-      ? undefined
-      : this.schemas.assertFieldSchema(dto.valueSchema);
-    const config = dto.config === undefined
-      ? undefined
-      : this.normalizeChoiceConfigForWrite(
-        field.kind,
-        dto.config,
-        (dto.valueSchema ?? field.valueSchema) as JsonSchema,
-        dto.valueSchema !== undefined,
-      );
+    const nextKind = dto.kind ?? field.kind;
+    if (dto.kind !== undefined && dataTypeOfKind(dto.kind) !== toApiDataType(field.dataType)) {
+      throw new BadRequestException('Dataset field kind must keep the same dataType');
+    }
+    const convertingKind = dto.kind !== undefined && dto.kind !== field.kind;
+    let valueSchema: Prisma.InputJsonValue | undefined;
+    if (convertingKind) {
+      valueSchema = this.schemas.assertFieldSchema(valueSchemaForField(nextKind));
+    } else if (dto.valueSchema !== undefined) {
+      valueSchema = this.schemas.assertFieldSchema(dto.valueSchema);
+    }
+    const choiceSchema = convertingKind
+      ? valueSchemaForField(nextKind)
+      : ((dto.valueSchema ?? field.valueSchema) as JsonSchema);
+    const config = convertingKind || dto.config !== undefined
+      ? this.normalizeChoiceConfigForWrite(
+        nextKind,
+        (dto.config ?? field.config) as Record<string, unknown>,
+        choiceSchema,
+        convertingKind || dto.valueSchema !== undefined,
+      )
+      : undefined;
     try {
       const transactionResult = await this.prisma.$transaction(async (tx) => {
         await this.incrementDatasetRevision(
@@ -556,6 +578,18 @@ export class DatasetsService {
           'Dataset revision is stale',
           DatasetStatus.active,
         );
+        if (convertingKind) {
+          await this.assertKindConversion(
+            tx,
+            datasetId,
+            {
+              ...field,
+              kind: nextKind,
+              config: (config ?? field.config) as Prisma.JsonValue,
+              valueSchema: valueSchema as Prisma.JsonValue,
+            },
+          );
+        }
         const result = await tx.datasetField.updateMany({
           where: {
             id: fieldId, workspaceId, datasetId, revision: dto.expectedFieldRevision,
@@ -563,6 +597,7 @@ export class DatasetsService {
           data: {
             name: dto.name,
             description: dto.description,
+            kind: convertingKind ? nextKind : undefined,
             valueSchema,
             config,
             required: dto.required,
@@ -825,7 +860,7 @@ export class DatasetsService {
     valueSchema: JsonSchema,
     rejectSubmittedMembership: boolean,
   ): Prisma.InputJsonObject {
-    if (kind !== DatasetFieldKind.single_select && kind !== DatasetFieldKind.multi_select) {
+    if (kind === DatasetFieldKind.tags || !isChoiceKind(kind)) {
       return config as Prisma.InputJsonObject;
     }
     const normalized = normalizeDatasetChoiceConfig(kind, config, {
@@ -839,11 +874,13 @@ export class DatasetsService {
         'Dataset choice membership must be declared only in config.options',
       );
     }
-    return {
+    const next = {
       ...config,
       options: normalized.options as unknown as Prisma.InputJsonArray,
-      ...(normalized.optionMode === 'cascader' && { optionMode: 'cascader' }),
-    } as Prisma.InputJsonObject;
+    } as Record<string, unknown>;
+    if (normalized.optionMode === 'cascader') next.optionMode = 'cascader';
+    else delete next.optionMode;
+    return next as Prisma.InputJsonObject;
   }
 
   private toSummary(dataset: {
@@ -892,6 +929,7 @@ export class DatasetsService {
     archivedAt: Date | null;
     config: Prisma.JsonValue;
     datasetId: string;
+    dataType: DatasetFieldDataType;
     description: string | null;
     id: string;
     isSystemManaged: boolean;
@@ -912,6 +950,7 @@ export class DatasetsService {
       key: field.key,
       name: field.name,
       description: field.description,
+      dataType: toApiDataType(field.dataType),
       kind: field.kind,
       valueSchema: field.valueSchema as DatasetFieldDefinition['valueSchema'],
       config: field.config as DatasetFieldDefinition['config'],
@@ -995,6 +1034,36 @@ export class DatasetsService {
       },
     });
     if (otherOwners === 0) throw new ConflictException('An active Dataset must retain an owner');
+  }
+
+  /** 同 dataType 转 kind 前扫全部活跃行；任一行不合法则整次拒绝。 */
+  private async assertKindConversion(
+    tx: Prisma.TransactionClient,
+    datasetId: string,
+    proposed: Prisma.DatasetFieldGetPayload<object>,
+  ): Promise<void> {
+    const rows = await tx.datasetRow.findMany({
+      where: { datasetId, deletedAt: null },
+      select: { id: true, values: true },
+    });
+    const invalidRowIds: string[] = [];
+    rows.forEach((row) => {
+      const values = row.values as Record<string, unknown>;
+      if (!Object.hasOwn(values, proposed.id)) return;
+      const value = values[proposed.id];
+      if (value === null || value === undefined || value === '') return;
+      try {
+        this.schemas.assertFieldValue(proposed, value);
+      } catch {
+        invalidRowIds.push(row.id);
+      }
+    });
+    if (invalidRowIds.length > 0) {
+      throw new BadRequestException({
+        message: 'Dataset field kind conversion rejected because existing rows are invalid',
+        invalidRowIds,
+      });
+    }
   }
 
   private async incrementDatasetRevision(

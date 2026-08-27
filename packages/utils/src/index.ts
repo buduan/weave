@@ -1,5 +1,6 @@
 export { parseJsonSchema } from './parse-json-schema';
 export type { JsonSchema, JsonSchemaObject, JsonValue } from './parse-json-schema';
+export * from './dataset-field-types';
 export * from './dataset-query';
 export * from './dataset-choices';
 export * from './form-schema';

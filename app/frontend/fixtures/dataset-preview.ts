@@ -16,6 +16,7 @@ import {
   createDatasetGroupDirectory,
   getDatasetQueryFingerprint,
 } from '~/components/dataset/dataset-query';
+import { dataTypeOfKind, valueSchemaForField } from '@weave/utils';
 import type { DatasetTableRow } from '~/components/dataset/types';
 
 export const DATASET_PREVIEW_ROW_COUNT = 5_000;
@@ -54,17 +55,8 @@ interface FieldFixture {
   width?: number;
 }
 
-function createValueSchema(
-  kind: DatasetFieldKind,
-  relationCardinality?: RelationCardinality,
-): JsonObject {
-  if (kind === 'number') return { type: ['number', 'null'] } as unknown as JsonObject;
-  if (kind === 'boolean') return { type: 'boolean' };
-  if (kind === 'multi_select' || (kind === 'relation' && relationCardinality === 'many')) {
-    return { type: 'array', items: { type: 'string' } };
-  }
-  if (kind === 'json') return {};
-  return { type: ['string', 'null'] } as unknown as JsonObject;
+function createValueSchema(kind: DatasetFieldKind): JsonObject {
+  return valueSchemaForField(kind) as JsonObject;
 }
 
 const baseFieldFixtures: FieldFixture[] = [
@@ -75,7 +67,7 @@ const baseFieldFixtures: FieldFixture[] = [
     key: 'bio', name: '个人简介', kind: 'long_text', width: 260,
   },
   { key: 'age', name: '年龄', kind: 'number' },
-  { key: 'enabled', name: '启用', kind: 'boolean' },
+  { key: 'enabled', name: '启用', kind: 'checkbox' },
   { key: 'joined_date', name: '加入日期', kind: 'date' },
   { key: 'reminder_time', name: '提醒时间', kind: 'time' },
   {
@@ -107,7 +99,7 @@ const baseFieldFixtures: FieldFixture[] = [
     key: 'notes', name: '备注', kind: 'long_text', width: 260,
   },
   { key: 'score', name: '评分', kind: 'number' },
-  { key: 'subscribed', name: '订阅通知', kind: 'boolean' },
+  { key: 'subscribed', name: '订阅通知', kind: 'checkbox' },
   { key: 'birthday', name: '生日', kind: 'date' },
   { key: 'office_time', name: '办公时间', kind: 'time' },
   {
@@ -141,7 +133,7 @@ const baseFieldFixtures: FieldFixture[] = [
 const supplementalKinds: DatasetFieldKind[] = [
   'text',
   'number',
-  'boolean',
+  'checkbox',
   'date',
   'single_select',
 ];
@@ -184,8 +176,9 @@ export const datasetPreviewFields: DatasetFieldDefinition[] = fieldFixtures
     key: fixture.key,
     name: fixture.name,
     description: null,
+    dataType: dataTypeOfKind(fixture.kind),
     kind: fixture.kind,
-    valueSchema: createValueSchema(fixture.kind, fixture.relationCardinality),
+    valueSchema: createValueSchema(fixture.kind),
     config: {
       ...(fixture.options ? { options: fixture.options as unknown as JsonValue } : {}),
       ...(fixture.width ? { width: fixture.width } : {}),
@@ -220,7 +213,7 @@ function fieldValue(field: DatasetFieldDefinition, index: number): JsonValue {
   if (field.key === 'name') return `成员 ${String(sequence).padStart(5, '0')}`;
   if (field.kind === 'long_text') return `这是第 ${sequence} 行用于验证长文本截断与编辑的模拟内容。`;
   if (field.kind === 'number') return (index * (field.position + 3)) % 10_000;
-  if (field.kind === 'boolean') return index % 3 !== 0;
+  if (field.kind === 'checkbox') return index % 3 !== 0;
   if (field.kind === 'date') return `2026-${String((index % 12) + 1).padStart(2, '0')}-${day}`;
   if (field.kind === 'time') return `${hour}:${String((index * 7) % 60).padStart(2, '0')}`;
   if (field.kind === 'datetime') return `2026-08-${day}T${hour}:00`;
@@ -228,7 +221,8 @@ function fieldValue(field: DatasetFieldDefinition, index: number): JsonValue {
   if (field.kind === 'url') return `https://example.com/people/${sequence}`;
   if (field.kind === 'single_select') {
     const options = field.key === 'level' ? levelOptions : selectOptions;
-    return options[optionIndex]?.value ?? null;
+    const value = options[optionIndex]?.value;
+    return value ? [value] : [];
   }
   if (field.kind === 'multi_select') {
     return [
@@ -279,9 +273,9 @@ export function createEmptyDatasetPreviewRow(sequence: number): DatasetTableRow 
   datasetPreviewFields.forEach((field) => {
     if (field.kind === 'relation') {
       relations[field.id] = field.relationCardinality === 'many' ? [] : '';
-    } else if (field.kind === 'boolean') {
+    } else if (field.kind === 'checkbox') {
       values[field.id] = false;
-    } else if (field.kind === 'multi_select') {
+    } else if (field.dataType === 'string[]') {
       values[field.id] = [];
     } else {
       values[field.id] = null;

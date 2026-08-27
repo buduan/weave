@@ -44,8 +44,8 @@ export interface CreateDatasetFieldInput {
   name: string;
   description?: string;
   kind: DatasetFieldKind;
-  /** 字段单个值的 Draft 2020-12 JSON Schema。 */
-  valueSchema: unknown;
+  /** 字段单个值的 Draft 2020-12 JSON Schema。省略时由 kind 推导。 */
+  valueSchema?: unknown;
   /** UI 配置（组件类型、选项等），以不透明 JSON 存储。 */
   config: Record<string, unknown>;
   required: boolean;
@@ -62,6 +62,7 @@ export interface UpdateDatasetFieldInput {
   expectedFieldRevision: number;
   name?: string;
   description?: string;
+  kind?: DatasetFieldKind;
   valueSchema?: unknown;
   config?: Record<string, unknown>;
   required?: boolean;

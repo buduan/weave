@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetStatus,
   type Dataset,
@@ -962,6 +963,7 @@ return redis.call('DEL', KEYS[1])`,
             datasetId,
             key: definition.key,
             name: definition.name,
+            dataType: DatasetFieldDataType.string,
             kind: DatasetFieldKind.text,
             valueSchema: { type: 'string', maxLength: 2_000 },
             isSystemManaged: true,

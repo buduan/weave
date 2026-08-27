@@ -10,7 +10,7 @@ Weave 是一个面向 Workspace 的人员与组织数据平台原型，基于数
 
 当前版本已经可以运行认证、管理和 Dataset API，并提供数据表列表与编辑页面。Form HTTP API 与业务编辑能力仍在建设中。下面的文档以仓库当前代码为准，不把 OpenSpec 设计或预留导航当作已完成能力。
 
-项目当前能力、实现边界和未暴露的内部领域服务，详见 [`docs/current-capabilities.md`](docs/current-capabilities.md)。
+项目当前能力、实现边界和未暴露的内部领域服务，详见 [`docs/current-capabilities.md`](docs/current-capabilities.md)。数据表存储类型、列外显（`kind`）与表单控件的绑定规则见 [`docs/dataset-form-field-types.md`](docs/dataset-form-field-types.md)。
 
 ## 技术架构
 

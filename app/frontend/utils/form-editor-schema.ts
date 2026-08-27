@@ -5,7 +5,6 @@ import type {
   FormDraftDefinitionInput,
   FormItemId,
   FormItemUiOptions,
-  FormWidget,
   JsonObject,
   JsonSchemaObject,
   JsonValue,
@@ -332,15 +331,11 @@ export function appendFormItem(
 }
 
 export function createDatasetFieldConfig(
-  widget: FormWidget,
   kind: DatasetFieldKind,
 ): JsonObject {
-  if (kind !== 'single_select' && kind !== 'multi_select') return {};
-  if (widget === 'tags-input') return {};
-  return {
-    optionMode: widget === 'cascader' ? 'cascader' : 'flat',
-    options: [],
-  };
+  if (kind === 'cascader') return { optionMode: 'cascader', options: [] };
+  if (kind === 'single_select' || kind === 'multi_select') return { options: [] };
+  return {};
 }
 
 export function rebindFormItem(

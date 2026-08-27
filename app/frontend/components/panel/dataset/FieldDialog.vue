@@ -4,10 +4,10 @@ import type {
   DatasetFieldDefinition,
   DatasetFieldKind,
   JsonObject,
-  JsonSchema,
   RelationCardinality,
   UpdateDatasetFieldRequest,
 } from '@weave/types';
+import { kindsForDataType, valueSchemaForField } from '@weave/utils';
 import { computed, reactive, watch } from '#imports';
 
 type CreateInput = Omit<CreateDatasetFieldRequest, 'expectedDatasetRevision'>;
@@ -32,11 +32,13 @@ const emit = defineEmits<{
   update: [input: UpdateInput];
 }>();
 
-const fieldKinds: Array<{ label: string; value: DatasetFieldKind }> = [
+const allFieldKinds: Array<{ label: string; value: DatasetFieldKind }> = [
   { label: '单行文本', value: 'text' },
   { label: '长文本', value: 'long_text' },
   { label: '数字', value: 'number' },
-  { label: '布尔值', value: 'boolean' },
+  { label: '百分数', value: 'percent' },
+  { label: '货币', value: 'currency' },
+  { label: '复选框', value: 'checkbox' },
   { label: '日期', value: 'date' },
   { label: '时间', value: 'time' },
   { label: '日期时间', value: 'datetime' },
@@ -44,6 +46,8 @@ const fieldKinds: Array<{ label: string; value: DatasetFieldKind }> = [
   { label: '网址', value: 'url' },
   { label: '单选', value: 'single_select' },
   { label: '多选', value: 'multi_select' },
+  { label: '级联', value: 'cascader' },
+  { label: '标签', value: 'tags' },
   { label: 'JSON', value: 'json' },
   { label: '关联', value: 'relation' },
 ];
@@ -61,7 +65,14 @@ const form = reactive({
 const validationError = reactive({ key: '', name: '', relation: '' });
 const editing = computed(() => props.field !== null);
 const protectedField = computed(() => props.field?.isSystemManaged === true);
-const isSelect = computed(() => form.kind === 'single_select' || form.kind === 'multi_select');
+const isSelect = computed(() => (
+  form.kind === 'single_select' || form.kind === 'multi_select' || form.kind === 'cascader'
+));
+const fieldKinds = computed(() => {
+  if (!props.field) return allFieldKinds;
+  const allowed = new Set(kindsForDataType(props.field.dataType));
+  return allFieldKinds.filter((item) => allowed.has(item.value));
+});
 
 watch(() => [props.open, props.field] as const, ([open, field]) => {
   if (!open) return;
@@ -86,17 +97,11 @@ watch(() => [props.open, props.field] as const, ([open, field]) => {
   validationError.relation = '';
 });
 
-function schemaFor(kind: DatasetFieldKind): JsonSchema {
-  if (kind === 'number') return { type: ['number', 'null'] } as unknown as JsonObject;
-  if (kind === 'boolean') return { type: 'boolean' };
-  if (kind === 'multi_select') return { type: 'array', items: { type: 'string' } };
-  if (kind === 'json') return {};
-  return { type: ['string', 'null'] } as unknown as JsonObject;
-}
-
 function config(): JsonObject {
+  if (form.kind === 'tags') return {};
   if (!isSelect.value) return {};
   return {
+    ...(form.kind === 'cascader' ? { optionMode: 'cascader' } : {}),
     options: form.optionsText
       .split('\n')
       .map((item) => item.trim())
@@ -120,7 +125,8 @@ function submit(): void {
       name: form.name.trim(),
       description: form.description.trim() || null,
       ...(!protectedField.value ? {
-        valueSchema: schemaFor(form.kind),
+        kind: form.kind,
+        valueSchema: valueSchemaForField(form.kind),
         config: config(),
         required: form.required,
       } : {}),
@@ -133,7 +139,7 @@ function submit(): void {
     name: form.name.trim(),
     description: form.description.trim() || null,
     kind: form.kind,
-    valueSchema: schemaFor(form.kind),
+    valueSchema: valueSchemaForField(form.kind),
     config: config(),
     required: form.required,
     ...(form.kind === 'relation' ? {
@@ -149,7 +155,9 @@ function submit(): void {
   <UModal
     :open="open"
     :title="editing ? '编辑字段' : '新增字段'"
-    :description="protectedField ? '系统字段仅可修改名称与描述。' : '字段类型创建后不可更改。'"
+    :description="protectedField
+      ? '系统字段仅可修改名称与描述。'
+      : (editing ? '存储类型不可更改；同类型外显可转换。' : '存储类型创建后不可更改。')"
     :dismissible="!pending"
     @update:open="emit('update:open', $event)"
   >
@@ -189,7 +197,7 @@ function submit(): void {
             :items="fieldKinds"
             value-key="value"
             class="w-full"
-            :disabled="editing"
+            :disabled="protectedField"
           />
         </UFormField>
         <UFormField

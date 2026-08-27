@@ -29,15 +29,14 @@ export function getFormItemTemplate(widget: FormWidget): FormItemTemplate {
 }
 
 export function inferFormItemTemplate(field: DatasetFieldDefinition): FormItemTemplate | null {
-  if (field.kind === 'multi_select' && field.config.optionMode === 'cascader') {
-    return getFormItemTemplate('cascader');
-  }
   const preferred: Partial<Record<DatasetFieldDefinition['kind'], FormWidget>> = {
-    boolean: 'checkbox',
+    cascader: 'cascader',
+    checkbox: 'checkbox',
     long_text: 'textarea',
-    multi_select: Object.hasOwn(field.config, 'options') ? 'selector' : 'tags-input',
+    multi_select: 'selector',
     relation: 'selector',
     single_select: 'radio',
+    tags: 'tags-input',
   };
   const template = getFormItemTemplate(preferred[field.kind] ?? 'input');
   return template.accepts(field) ? template : null;

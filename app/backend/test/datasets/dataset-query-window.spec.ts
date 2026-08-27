@@ -32,6 +32,7 @@ function field(
     key: id,
     name: id,
     description: null,
+    dataType: kind === 'number' ? 'number' : 'string',
     kind,
     valueSchema: {},
     config: {},

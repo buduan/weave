@@ -1,17 +1,20 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetSubjectMode,
   DatasetType,
   FormSubmissionAccess,
   FormWriteMode,
 } from '@prisma/client';
-import type { JsonSchema } from '@weave/types';
+import type { FormWidget, JsonSchema } from '@weave/types';
 import {
   createFormAjv,
   evaluateFormAnswers,
   parseFormSchema,
   projectCurrentFormFields,
+  toApiDataType,
+  widgetAcceptsDataType,
 } from '@weave/utils';
 
 /** Form 定义发布时的完整校验上下文。 */
@@ -26,6 +29,7 @@ interface DefinitionContext {
     archivedAt: Date | null;
     config: unknown;
     datasetId: string;
+    dataType: DatasetFieldDataType;
     id: string;
     isSystemManaged: boolean;
     kind: DatasetFieldKind;
@@ -115,8 +119,15 @@ export class FormDefinitionValidatorService {
         throw new BadRequestException(`System-managed field cannot be writable: ${itemId}`);
       }
 
-      // 关联字段额外校验。
       const ui = extension.ui as unknown as Record<string, unknown> | undefined;
+      if (typeof ui?.widget === 'string'
+        && !widgetAcceptsDataType(ui.widget as FormWidget, toApiDataType(field.dataType))) {
+        throw new BadRequestException(
+          `Form widget is incompatible with Dataset field dataType: ${itemId}`,
+        );
+      }
+
+      // 关联字段额外校验。
       if (field.kind === DatasetFieldKind.relation) {
         const target = field.relationTargetDatasetId
           ? datasetsById.get(field.relationTargetDatasetId)

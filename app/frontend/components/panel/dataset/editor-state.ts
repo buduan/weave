@@ -17,7 +17,7 @@ export function createDatasetCellUpdateRequest(
 ): UpdateDatasetRowRequest {
   return {
     expectedRevision: payload.expectedRevision,
-    ...(field.kind === 'relation'
+    ...(field.dataType === 'relation'
       ? { relations: { [field.id]: payload.value as string | string[] } }
       : { values: { [field.id]: payload.value } }),
   };

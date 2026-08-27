@@ -47,7 +47,7 @@ describe('Dataset choice utilities', () => {
   });
 
   it('rejects duplicate tree values and incompatible option modes', () => {
-    expect(() => normalizeDatasetChoiceConfig('multi_select', {
+    expect(() => normalizeDatasetChoiceConfig('cascader', {
       optionMode: 'cascader',
       options: [{
         value: 'root',

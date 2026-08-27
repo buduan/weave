@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { DatasetFieldDefinition } from '@weave/types';
 import {
   createDatasetPreviewRows,
   datasetPreviewFields,
@@ -11,7 +12,6 @@ import {
   getDatasetFilterOperators,
   parseDatasetFieldInputValue,
 } from './dataset-query';
-import type { DatasetFieldDefinition } from '@weave/types';
 import type { DatasetFilterOperator, DatasetTableQuery } from './types';
 
 function operatorValues(fieldId: string): DatasetFilterOperator[] {
@@ -39,7 +39,13 @@ describe('dataset filter operator matrix', () => {
 
   it('distinguishes boolean, single-value and multi-value fields', () => {
     expect(operatorValues('field-enabled')).toEqual(['equals']);
-    expect(operatorValues('field-status')).toEqual(['equals', 'not_equals', 'is_empty', 'is_not_empty']);
+    expect(operatorValues('field-status')).toEqual([
+      'contains_any',
+      'contains_all',
+      'not_contains',
+      'is_empty',
+      'is_not_empty',
+    ]);
     expect(operatorValues('field-mentor')).toEqual(['equals', 'not_equals', 'is_empty', 'is_not_empty']);
     expect(operatorValues('field-skills')).toEqual([
       'contains_any',
@@ -149,7 +155,8 @@ describe('Dataset cascader adapters', () => {
     key: 'path',
     name: 'Path',
     description: null,
-    kind: 'multi_select',
+    dataType: 'string[]',
+    kind: 'cascader',
     valueSchema: { type: 'array', items: { type: 'string' } },
     config: {
       optionMode: 'cascader',

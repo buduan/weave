@@ -5,6 +5,7 @@ import type {
   JsonSchema,
   JsonSchemaObject,
 } from '@weave/types';
+import { isChoiceKind } from './dataset-field-types';
 import { cloneJson } from './json-clone';
 import { isRecord } from './json-guards';
 
@@ -113,21 +114,26 @@ export function normalizeDatasetChoiceConfig(
   if (rawMode !== 'flat' && rawMode !== 'cascader') {
     throw new TypeError(`Unknown Dataset choice optionMode: ${String(rawMode)}`);
   }
-  const choiceKind = kind === 'single_select' || kind === 'multi_select';
-  if (!choiceKind && (hasOptions || Object.hasOwn(config, 'optionMode'))) {
+  if (!isChoiceKind(kind) && (hasOptions || Object.hasOwn(config, 'optionMode'))) {
     throw new TypeError(`Dataset field kind ${kind} does not support choice options`);
   }
-  if (rawMode === 'cascader' && kind !== 'multi_select') {
-    throw new TypeError('Cascader requires a multi_select Dataset field');
+  const optionMode: DatasetChoiceOptionMode = kind === 'cascader'
+    ? 'cascader'
+    : rawMode;
+  if (optionMode === 'cascader' && kind !== 'cascader') {
+    throw new TypeError('Cascader requires a cascader Dataset field');
+  }
+  if (kind === 'cascader' && rawMode === 'flat' && hasOptions) {
+    throw new TypeError('Cascader Dataset fields cannot use a flat optionMode');
   }
   const normalizedOptions = hasOptions
     ? normalizeDatasetChoiceOptions(config.options, options)
     : [];
-  if (rawMode === 'flat') {
+  if (optionMode === 'flat') {
     const nested = normalizedOptions.find((option) => option.children !== undefined);
     if (nested) throw new TypeError('Flat Dataset choices cannot contain children');
   }
-  return { hasOptions, optionMode: rawMode, options: normalizedOptions };
+  return { hasOptions, optionMode, options: normalizedOptions };
 }
 
 /** Enumerate only complete root-to-leaf paths, in configured display order. */

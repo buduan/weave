@@ -23,12 +23,25 @@ export type DatasetSubjectMode = (typeof datasetSubjectModes)[number];
 export const datasetCollaboratorRoles = ['owner', 'maintainer'] as const;
 export type DatasetCollaboratorRole = (typeof datasetCollaboratorRoles)[number];
 
-/** Dataset 字段值类型注册表。 */
+/** Dataset 字段存储类型：决定单元格 JSON 形态。 */
+export const datasetFieldDataTypes = [
+  'string',
+  'number',
+  'boolean',
+  'string[]',
+  'json',
+  'relation',
+] as const;
+export type DatasetFieldDataType = (typeof datasetFieldDataTypes)[number];
+
+/** Dataset 字段外显：决定表格如何展示；同 dataType 内可转换。 */
 export const datasetFieldKinds = [
   'text',
   'long_text',
   'number',
-  'boolean',
+  'percent',
+  'currency',
+  'checkbox',
   'date',
   'time',
   'datetime',
@@ -36,6 +49,8 @@ export const datasetFieldKinds = [
   'url',
   'single_select',
   'multi_select',
+  'cascader',
+  'tags',
   'json',
   'relation',
 ] as const;
@@ -139,6 +154,9 @@ export interface DatasetFieldDefinition {
   key: string;
   name: string;
   description: string | null;
+  /** 存储类型；创建后不可改。 */
+  dataType: DatasetFieldDataType;
+  /** 表格外显；同 dataType 内可改。 */
   kind: DatasetFieldKind;
   /** 字段单个值的 Draft 2020-12 JSON Schema。 */
   valueSchema: JsonSchema;
@@ -311,7 +329,7 @@ export interface CreateDatasetFieldRequest {
   name: string;
   description?: string | null;
   kind: DatasetFieldKind;
-  valueSchema: JsonSchema;
+  valueSchema?: JsonSchema;
   config?: JsonObject;
   required?: boolean;
   relationTargetDatasetId?: string | null;
@@ -326,7 +344,7 @@ export interface CreateDatasetPanelFieldRequest {
   name: string;
   description?: string;
   kind: DatasetFieldKind;
-  valueSchema: JsonSchema;
+  valueSchema?: JsonSchema;
   config: JsonObject;
   required: boolean;
   relationTargetDatasetId?: string;
@@ -339,6 +357,7 @@ export interface UpdateDatasetFieldRequest {
   expectedFieldRevision: number;
   name?: string;
   description?: string | null;
+  kind?: DatasetFieldKind;
   valueSchema?: JsonSchema;
   config?: JsonObject;
   required?: boolean;

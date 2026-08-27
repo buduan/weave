@@ -161,7 +161,7 @@ const leafProps = computed(() => {
   }
   if (widgetName.value === 'selector') {
     const prop = props.item.property as Record<string, unknown>;
-    if (prop.type === 'array') base.multiple = true;
+    if (prop.type === 'array' && prop.maxItems !== 1) base.multiple = true;
   }
   if (widgetName.value === 'checkbox') {
     const prop = props.item.property as Record<string, unknown>;
@@ -171,10 +171,19 @@ const leafProps = computed(() => {
   return base;
 });
 
+const storesSingletonArray = computed(() => {
+  const prop = props.item.property as Record<string, unknown>;
+  return prop.type === 'array' && prop.maxItems === 1;
+});
+
 const modelValue = computed<JsonValue | undefined>({
   get: () => (props.allowEdit ? undefined : state.value?.[props.item.id]),
   set: (value) => {
     if (props.allowEdit || !state.value) return;
+    if (storesSingletonArray.value && !Array.isArray(value)) {
+      state.value[props.item.id] = value == null || value === '' ? [] : [value];
+      return;
+    }
     state.value[props.item.id] = value;
   },
 });

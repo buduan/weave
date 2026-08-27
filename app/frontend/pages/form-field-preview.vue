@@ -9,6 +9,7 @@ import type {
   JsonSchemaObject,
   JsonValue,
 } from '@weave/types';
+import { dataTypeOfKind } from '@weave/utils';
 import type { FormRenderMode } from '~/components/form/types';
 import { appendFormItem } from '~/utils/form-editor-schema';
 import { getFormItemTemplate } from '~/utils/form-templates/registry';
@@ -65,8 +66,10 @@ const mockSchema: JsonSchema = {
       },
     },
     [ids.dept]: {
-      type: 'string',
-      default: 'engineering',
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 1,
+      default: ['engineering'],
       oneOf: [
         { const: 'engineering', 'x-form': { i18n: { title: { 'zh-CN': '产品研发部' } } } },
         { const: 'design', 'x-form': { i18n: { title: { 'zh-CN': '设计与体验部' } } } },
@@ -193,6 +196,7 @@ function previewField(
     key: `preview_${widget}`,
     name: `新增${getFormItemTemplate(widget).label}`,
     description: null,
+    dataType: dataTypeOfKind(kind),
     kind,
     valueSchema,
     config,
@@ -210,17 +214,19 @@ function previewField(
 const previewFields: Record<FormWidget, DatasetFieldDefinition> = {
   input: previewField('input', 'text', { type: 'string' }),
   textarea: previewField('textarea', 'long_text', { type: 'string' }),
-  checkbox: previewField('checkbox', 'boolean', { type: 'boolean' }),
-  radio: previewField('radio', 'single_select', { type: 'string' }, {
+  checkbox: previewField('checkbox', 'checkbox', { type: 'boolean' }),
+  radio: previewField('radio', 'single_select', {
+    type: 'array', items: { type: 'string' }, maxItems: 1,
+  }, {
     optionMode: 'flat', options: [{ value: 'one', label: '选项一' }],
   }),
   selector: previewField('selector', 'multi_select', {
     type: 'array', items: { type: 'string' },
   }, { optionMode: 'flat', options: [{ value: 'one', label: '选项一' }] }),
-  cascader: previewField('cascader', 'multi_select', {
+  cascader: previewField('cascader', 'cascader', {
     type: 'array', items: { type: 'string' },
   }, { optionMode: 'cascader', options: [] }),
-  'tags-input': previewField('tags-input', 'multi_select', {
+  'tags-input': previewField('tags-input', 'tags', {
     type: 'array', items: { type: 'string' },
   }),
 };

@@ -14,6 +14,7 @@ import type {
   JsonSchema,
   JsonSchemaObject,
 } from '@weave/types';
+import { dataTypeOfKind } from '@weave/utils';
 
 import { FormDefinitionValidatorService } from '../../src/forms/form-definition-validator.service';
 import {
@@ -54,6 +55,7 @@ function field(
     key: id,
     name: id,
     description: null,
+    dataType: dataTypeOfKind(kind),
     kind,
     valueSchema,
     config,
@@ -73,20 +75,22 @@ describe('frontend template to backend definition boundary', () => {
     const fieldsByWidget = {
       input: field('field-input', DatasetFieldKind.text, { type: 'string' }),
       textarea: field('field-textarea', DatasetFieldKind.long_text, { type: 'string' }),
-      checkbox: field('field-checkbox', DatasetFieldKind.boolean, { type: 'boolean' }),
-      radio: field('field-radio', DatasetFieldKind.single_select, { type: 'string' }, {
+      checkbox: field('field-checkbox', DatasetFieldKind.checkbox, { type: 'boolean' }),
+      radio: field('field-radio', DatasetFieldKind.single_select, {
+        type: 'array', items: { type: 'string' }, maxItems: 1,
+      }, {
         optionMode: 'flat', options: [{ value: 'yes', label: 'Yes' }],
       }),
       selector: field('field-selector', DatasetFieldKind.multi_select, {
         type: 'array', items: { type: 'string' },
       }, { optionMode: 'flat', options: [{ value: 'a', label: 'A' }] }),
-      cascader: field('field-cascader', DatasetFieldKind.multi_select, {
+      cascader: field('field-cascader', DatasetFieldKind.cascader, {
         type: 'array', items: { type: 'string' },
       }, {
         optionMode: 'cascader',
         options: [{ value: 'root', label: 'Root', children: [{ value: 'leaf', label: 'Leaf' }] }],
       }),
-      'tags-input': field('field-tags', DatasetFieldKind.multi_select, {
+      'tags-input': field('field-tags', DatasetFieldKind.tags, {
         type: 'array', items: { type: 'string' },
       }),
     } satisfies Record<(typeof formItemTemplates)[number]['widget'], DatasetFieldDefinition>;
@@ -160,5 +164,56 @@ describe('frontend template to backend definition boundary', () => {
     };
 
     expect(() => new FormDefinitionValidatorService().validate(schema, context)).not.toThrow();
+  });
+
+  it('accepts Radio bound to a multi_select field of the same dataType', () => {
+    const multi = field('field-multi', DatasetFieldKind.multi_select, {
+      type: 'array', items: { type: 'string' },
+    }, { optionMode: 'flat', options: [{ value: 'a', label: 'A' }] });
+    const schema: JsonSchemaObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [itemIds[0]]: getFormItemTemplate('radio').createProperty({
+          datasetField: multi,
+          locale: 'zh-CN',
+          position: 0,
+        }),
+      },
+      'x-form': { version: 1, datasetId, capture: {} },
+    };
+    expect(() => new FormDefinitionValidatorService().validate(schema, {
+      dataset: { id: datasetId, subjectMode: DatasetSubjectMode.none, type: DatasetType.standard },
+      fields: [{ ...multi, archivedAt: null }],
+      targetDatasets: [],
+      submissionAccess: FormSubmissionAccess.anonymous_allowed,
+      writeMode: FormWriteMode.create_row,
+    })).not.toThrow();
+  });
+
+  it('rejects a Form widget that does not accept the Dataset field dataType', () => {
+    const textField = field('field-input', DatasetFieldKind.text, { type: 'string' });
+    const schema: JsonSchemaObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [itemIds[0]]: {
+          type: 'string',
+          'x-form': {
+            datasetFieldId: 'field-input',
+            position: 0,
+            ui: { widget: 'radio' },
+          },
+        },
+      },
+      'x-form': { version: 1, datasetId, capture: {} },
+    };
+    expect(() => new FormDefinitionValidatorService().validate(schema, {
+      dataset: { id: datasetId, subjectMode: DatasetSubjectMode.none, type: DatasetType.standard },
+      fields: [{ ...textField, archivedAt: null }],
+      targetDatasets: [],
+      submissionAccess: FormSubmissionAccess.anonymous_allowed,
+      writeMode: FormWriteMode.create_row,
+    })).toThrow('Form widget is incompatible with Dataset field dataType');
   });
 });

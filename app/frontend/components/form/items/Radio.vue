@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from '#imports';
 import type { FormItemOption, FormItemValue } from './types';
 
 type RadioSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
@@ -25,12 +26,22 @@ const props = withDefaults(defineProps<RadioProps>(), {
   size: 'md',
   color: 'primary',
 });
-const model = defineModel<FormItemValue | undefined>({ default: undefined });
+const model = defineModel<FormItemValue | FormItemValue[] | undefined>({ default: undefined });
+const radioModel = computed<FormItemValue | undefined>({
+  get: () => (Array.isArray(model.value) ? model.value[0] : model.value),
+  set: (value) => {
+    if (value === undefined || value === '') {
+      model.value = [];
+      return;
+    }
+    model.value = [value];
+  },
+});
 </script>
 
 <template>
   <URadioGroup
-    v-model="model"
+    v-model="radioModel"
     v-bind="$attrs"
     class="w-full"
     :items="items"

@@ -50,7 +50,19 @@ const selectModel = computed<FormItemValue | FormItemValue[] | undefined>({
     return Array.isArray(model.value) ? model.value[0] : model.value ?? undefined;
   },
   set: (value) => {
-    model.value = value;
+    if (props.multiple) {
+      model.value = Array.isArray(value) ? value : [];
+      return;
+    }
+    if (Array.isArray(model.value)) {
+      if (value == null || value === '') {
+        model.value = [];
+        return;
+      }
+      model.value = Array.isArray(value) ? value : [value];
+      return;
+    }
+    model.value = Array.isArray(value) ? value[0] : value;
   },
 });
 </script>

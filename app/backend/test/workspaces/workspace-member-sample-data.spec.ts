@@ -33,6 +33,7 @@ function createSampleTransaction(memberId: string) {
       key: 'name',
       name: '姓名',
       description: null,
+      dataType: 'string',
       kind: 'text',
       valueSchema: { type: 'string', minLength: 1, maxLength: 128 },
       config: {},

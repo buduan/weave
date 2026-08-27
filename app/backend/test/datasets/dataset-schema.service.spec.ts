@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { DatasetFieldKind } from '@prisma/client';
+import { DatasetFieldDataType, DatasetFieldKind } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 
 import { DatasetSchemaService } from '../../src/datasets/dataset-schema.service';
@@ -12,6 +12,7 @@ function field(overrides: Record<string, unknown> = {}) {
     key: 'name',
     name: 'Name',
     description: null,
+    dataType: DatasetFieldDataType.string,
     kind: DatasetFieldKind.text,
     valueSchema: { type: 'string', maxLength: 4 },
     config: {},
@@ -58,20 +59,22 @@ describe('Dataset row Schema validation', () => {
 
   it('uses current flat choices instead of stale valueSchema membership', () => {
     const single = field({
+      dataType: DatasetFieldDataType.string_array,
       kind: DatasetFieldKind.single_select,
-      valueSchema: { type: 'string', minLength: 2, enum: ['stale'] },
+      valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
       config: { options: [{ value: 'current', label: 'Current' }] },
     });
     expect(service.validateRow([single as never], {
-      values: { 'field-1': 'current' },
+      values: { 'field-1': ['current'] },
       relations: {},
-    }).values).toEqual({ 'field-1': 'current' });
+    }).values).toEqual({ 'field-1': ['current'] });
     expect(() => service.validateRow([single as never], {
-      values: { 'field-1': 'stale' },
+      values: { 'field-1': ['stale'] },
       relations: {},
     })).toThrow('Unknown choice');
 
     const multi = field({
+      dataType: DatasetFieldDataType.string_array,
       kind: DatasetFieldKind.multi_select,
       valueSchema: { type: 'array', items: { type: 'string', enum: ['stale'] } },
       config: { options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
@@ -88,7 +91,8 @@ describe('Dataset row Schema validation', () => {
 
   it('accepts only one complete current cascader path', () => {
     const cascader = field({
-      kind: DatasetFieldKind.multi_select,
+      dataType: DatasetFieldDataType.string_array,
+      kind: DatasetFieldKind.cascader,
       valueSchema: { type: 'array', items: { type: 'string' } },
       config: {
         optionMode: 'cascader',
@@ -123,8 +127,9 @@ describe('Dataset row Schema validation', () => {
   it('does not revalidate untouched removed choices in a partial update', () => {
     const current = field({
       required: false,
+      dataType: DatasetFieldDataType.string_array,
       kind: DatasetFieldKind.single_select,
-      valueSchema: { type: 'string' },
+      valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
       config: { options: [{ value: 'current', label: 'Current' }] },
     });
     const other = field({ id: 'field-2', required: false });
@@ -132,27 +137,28 @@ describe('Dataset row Schema validation', () => {
     expect(service.validateRow([current, other] as never, {
       values: { 'field-2': 'new' },
       relations: {},
-    }, { 'field-1': 'removed' }, true).values).toEqual({
-      'field-1': 'removed',
+    }, { 'field-1': ['removed'] }, true).values).toEqual({
+      'field-1': ['removed'],
       'field-2': 'new',
     });
     expect(() => service.validateRow([current, other] as never, {
-      values: { 'field-1': 'removed' },
+      values: { 'field-1': ['removed'] },
       relations: {},
-    }, { 'field-1': 'removed' }, true)).toThrow('Unknown choice');
+    }, { 'field-1': ['removed'] }, true)).toThrow('Unknown choice');
   });
 
   it('treats explicit empty options as accepting no supplied value', () => {
     const empty = field({
       required: false,
+      dataType: DatasetFieldDataType.string_array,
       kind: DatasetFieldKind.single_select,
-      valueSchema: { type: 'string', enum: ['legacy'] },
+      valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
       config: { options: [] },
     });
     expect(service.validateRow([empty as never], { values: {}, relations: {} }).values)
       .toEqual({});
     expect(() => service.validateRow([empty as never], {
-      values: { 'field-1': 'legacy' },
+      values: { 'field-1': ['legacy'] },
       relations: {},
     })).toThrow('no current choices');
   });

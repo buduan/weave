@@ -7,6 +7,8 @@ import type {
 } from '@weave/types';
 import {
   getDatasetFieldOptions,
+  isChoiceKind,
+  isStringArrayDataType,
   normalizeDatasetChoiceConfig,
   parseDatasetFieldInputValue,
 } from '@weave/utils';
@@ -45,16 +47,16 @@ const errors = reactive<Record<string, string>>({});
 watch(() => props.fields, (fields) => {
   fields.forEach((field) => {
     if (field.isSystemManaged || drafts[field.id] !== undefined) return;
-    if (field.kind === 'boolean') drafts[field.id] = false;
-    else if (field.kind === 'multi_select'
-      || (field.kind === 'relation' && field.relationCardinality === 'many')) {
+    if (field.dataType === 'boolean') drafts[field.id] = false;
+    else if (isStringArrayDataType(field.dataType)
+      || (field.dataType === 'relation' && field.relationCardinality === 'many')) {
       drafts[field.id] = [];
     } else drafts[field.id] = '';
   });
 }, { immediate: true });
 
 function inputType(field: DatasetFieldDefinition): string {
-  if (field.kind === 'number') return 'number';
+  if (field.dataType === 'number') return 'number';
   if (field.kind === 'date') return 'date';
   if (field.kind === 'time') return 'time';
   if (field.kind === 'datetime') return 'datetime-local';
@@ -64,22 +66,15 @@ function inputType(field: DatasetFieldDefinition): string {
 }
 
 function isChoiceField(field: DatasetFieldDefinition): boolean {
-  return field.kind === 'single_select'
-    || field.kind === 'multi_select'
-    || field.kind === 'relation';
+  return isChoiceKind(field.kind) || field.kind === 'tags' || field.dataType === 'relation';
 }
 
 function isCascader(field: DatasetFieldDefinition): boolean {
-  if (field.kind !== 'multi_select') return false;
-  try {
-    return normalizeDatasetChoiceConfig(field.kind, field.config).optionMode === 'cascader';
-  } catch {
-    return false;
-  }
+  return field.kind === 'cascader';
 }
 
 function cascaderOptions(field: DatasetFieldDefinition) {
-  if (field.kind !== 'multi_select') return [];
+  if (field.kind !== 'cascader') return [];
   try {
     return toFormItemOptions(normalizeDatasetChoiceConfig(field.kind, field.config).options);
   } catch {
@@ -89,7 +84,8 @@ function cascaderOptions(field: DatasetFieldDefinition) {
 
 function isMultiple(field: DatasetFieldDefinition): boolean {
   return field.kind === 'multi_select'
-    || (field.kind === 'relation' && field.relationCardinality === 'many');
+    || field.kind === 'tags'
+    || (field.dataType === 'relation' && field.relationCardinality === 'many');
 }
 
 function isFieldDisabled(field: DatasetFieldDefinition): boolean {
@@ -100,9 +96,11 @@ function options(field: DatasetFieldDefinition): DatasetOption[] {
   return getDatasetFieldOptions(field, props.relationOptions);
 }
 
-function selectValue(fieldId: string): string | string[] {
+function selectValue(fieldId: string, field: DatasetFieldDefinition): string | string[] {
   const value = drafts[fieldId];
-  return Array.isArray(value) ? value.map(String) : String(value ?? '');
+  if (isMultiple(field)) return Array.isArray(value) ? value.map(String) : [];
+  if (Array.isArray(value)) return String(value[0] ?? '');
+  return String(value ?? '');
 }
 
 function cascaderValue(fieldId: string): string[] {
@@ -116,7 +114,7 @@ function updateDraft(fieldId: string, value: unknown): void {
 }
 
 function handleSelectOpen(open: boolean, field: DatasetFieldDefinition): void {
-  if (open && field.kind === 'relation') emit('relationOptionsRequest', field.id);
+  if (open && field.dataType === 'relation') emit('relationOptionsRequest', field.id);
 }
 
 function fieldError(field: DatasetFieldDefinition): string {
@@ -139,7 +137,7 @@ function submit(): void {
     }
     if (parsed.value === null || parsed.value === ''
       || (Array.isArray(parsed.value) && parsed.value.length === 0)) return;
-    if (field.kind === 'relation') {
+    if (field.dataType === 'relation') {
       relations[field.id] = parsed.value as string | string[];
     } else {
       values[field.id] = parsed.value;
@@ -190,7 +188,7 @@ function submit(): void {
       >自动填充</span>
 
       <UCheckbox
-        v-else-if="field.kind === 'boolean'"
+        v-else-if="field.kind === 'checkbox'"
         :model-value="drafts[field.id] === true"
         :disabled="isFieldDisabled(field)"
         :aria-label="field.name"
@@ -223,7 +221,7 @@ function submit(): void {
 
       <USelect
         v-else-if="isChoiceField(field)"
-        :model-value="selectValue(field.id)"
+        :model-value="selectValue(field.id, field)"
         :items="options(field)"
         value-key="value"
         :multiple="isMultiple(field)"

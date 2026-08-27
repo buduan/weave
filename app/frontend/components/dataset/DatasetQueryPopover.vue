@@ -82,7 +82,7 @@ function selectedRelationIds(fieldId: string): string[] {
 }
 
 function requestRelationOptions(fieldId: string, search = '', cursor?: string): void {
-  if (getField(fieldId)?.kind !== 'relation') return;
+  if (getField(fieldId)?.dataType !== 'relation') return;
   emit('relationOptionsRequest', {
     fieldId,
     search,
@@ -96,9 +96,9 @@ function relationOptionState(fieldId: string): DatasetRelationOptionState | unde
 }
 
 function initialFilterValue(field: DatasetFieldDefinition | undefined): JsonValue {
-  if (field?.kind === 'boolean') return true;
-  if (field?.kind === 'multi_select'
-    || (field?.kind === 'relation' && field.relationCardinality === 'many')) {
+  if (field?.dataType === 'boolean') return true;
+  if (field && (field.dataType === 'string[]'
+    || (field.dataType === 'relation' && field.relationCardinality === 'many'))) {
     return [];
   }
   return null;
@@ -380,18 +380,21 @@ function isSelectField(fieldId: string): boolean {
   const field = getField(fieldId);
   return field?.kind === 'single_select'
     || field?.kind === 'multi_select'
-    || field?.kind === 'relation';
+    || field?.kind === 'cascader'
+    || field?.kind === 'tags'
+    || field?.dataType === 'relation';
 }
 
 function isMultipleField(fieldId: string): boolean {
   const field = getField(fieldId);
-  return field?.kind === 'multi_select'
-    || (field?.kind === 'relation' && field.relationCardinality === 'many');
+  return field?.dataType === 'string[]'
+    || (field?.dataType === 'relation' && field.relationCardinality === 'many');
 }
 
 function inputType(fieldId: string): string {
-  const kind = getField(fieldId)?.kind;
-  if (kind === 'number') return 'number';
+  const field = getField(fieldId);
+  if (field?.dataType === 'number') return 'number';
+  const kind = field?.kind;
   if (kind === 'date') return 'date';
   if (kind === 'time') return 'time';
   if (kind === 'datetime') return 'datetime-local';
@@ -485,7 +488,7 @@ function inputType(fieldId: string): string {
               class="mt-2"
             >
               <USelect
-                v-if="getField(rule.fieldId)?.kind === 'boolean'"
+                v-if="getField(rule.fieldId)?.kind === 'checkbox'"
                 :model-value="String(rule.value ?? true)"
                 :items="[{ label: '是', value: 'true' }, { label: '否', value: 'false' }]"
                 value-key="value"
@@ -494,7 +497,7 @@ function inputType(fieldId: string): string {
               />
               <template v-else-if="isSelectField(rule.fieldId)">
                 <USelectMenu
-                  v-if="getField(rule.fieldId)?.kind === 'relation'"
+                  v-if="getField(rule.fieldId)?.dataType === 'relation'"
                   :model-value="selectFilterValue(rule)"
                   :items="selectableItems(rule)"
                   value-key="value"

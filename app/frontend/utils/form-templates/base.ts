@@ -1,21 +1,32 @@
-import type { DatasetFieldDefinition, FormWidget, JsonSchemaObject } from '@weave/types';
+import type {
+  DatasetFieldDataType,
+  DatasetFieldDefinition,
+  FormWidget,
+  JsonSchemaObject,
+} from '@weave/types';
+import { dataTypeOfKind, defaultKindForWidget } from '@weave/utils';
 import type { FormTemplateCreateContext } from './types';
 
 function propertyShape(
   field: DatasetFieldDefinition | undefined,
   widget: FormWidget,
 ): JsonSchemaObject {
-  if (widget === 'checkbox') return { type: 'boolean' };
-  if (widget === 'cascader' || widget === 'tags-input') {
-    return { type: 'array', items: { type: 'string' } };
+  const dataType: DatasetFieldDataType = field?.dataType
+    ?? dataTypeOfKind(defaultKindForWidget[widget]);
+  if (dataType === 'boolean') return { type: 'boolean' };
+  if (dataType === 'number') return { type: 'number' };
+  if (dataType === 'string[]') {
+    const schema: JsonSchemaObject = { type: 'array', items: { type: 'string' } };
+    if (widget === 'radio' || field?.kind === 'single_select') schema.maxItems = 1;
+    if (widget === 'selector' && field?.kind !== 'single_select') schema.uniqueItems = true;
+    return schema;
   }
-  if (field && widget === 'selector' && (
-    field.kind === 'multi_select'
-    || (field.kind === 'relation' && field.relationCardinality === 'many')
-  )) {
-    return { type: 'array', items: { type: 'string' }, uniqueItems: true };
+  if (dataType === 'relation') {
+    if (field?.relationCardinality === 'many') {
+      return { type: 'array', items: { type: 'string' }, uniqueItems: true };
+    }
+    return { type: 'string' };
   }
-  if (field?.kind === 'number') return { type: 'number' };
   const formats: Partial<Record<DatasetFieldDefinition['kind'], string>> = {
     date: 'date',
     datetime: 'date-time',
@@ -40,7 +51,7 @@ export function createTemplateProperty(
   const bindingId = datasetField?.id ?? datasetFieldId;
   if (!bindingId) throw new TypeError('Form template requires a Dataset field binding');
   const rawConfig = (datasetField?.config ?? {}) as Record<string, unknown>;
-  const relationOptions = datasetField?.kind === 'relation'
+  const relationOptions = datasetField?.dataType === 'relation'
     && typeof rawConfig.labelFieldId === 'string'
     ? { labelFieldId: rawConfig.labelFieldId }
     : undefined;
@@ -59,8 +70,4 @@ export function createTemplateProperty(
       },
     },
   } as unknown as JsonSchemaObject;
-}
-
-export function isFlatChoice(field: DatasetFieldDefinition): boolean {
-  return field.config.optionMode !== 'cascader';
 }

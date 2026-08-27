@@ -7,7 +7,6 @@ import {
   parseFormSchema,
   projectCurrentFormFields,
 } from '@weave/utils';
-import { formRuntimeCaseIds } from '../../../packages/utils/test-fixtures/form-runtime-cases';
 
 const itemA = 'q_00000000-0000-4000-8000-000000000001';
 const itemB = 'q_00000000-0000-4000-8000-000000000002';
@@ -27,6 +26,7 @@ function field(overrides: Record<string, unknown>) {
   return {
     id: 'field-a',
     datasetId: 'dataset-1',
+    dataType: 'string',
     kind: 'text',
     valueSchema: { type: 'string' },
     config: {},
@@ -41,27 +41,34 @@ describe('Form runtime projection', () => {
   it('uses current flat options and removes stale author and Dataset membership', () => {
     const author = schema({
       [itemA]: {
-        type: 'string',
-        enum: ['author-old'],
+        type: 'array',
+        items: { type: 'string', enum: ['author-old'] },
+        maxItems: 1,
         'x-form': { datasetFieldId: 'field-a', position: 0, ui: { widget: 'selector' } },
       },
     });
     const projected = projectCurrentFormFields(parseFormSchema(author), [field({
+      dataType: 'string[]',
       kind: 'single_select',
-      valueSchema: { type: 'string', minLength: 2, enum: ['dataset-old'] },
+      valueSchema: { type: 'array', items: { type: 'string', minLength: 2 }, maxItems: 1 },
       config: { options: [{ value: 'new', label: 'New', i18n: { 'zh-CN': '新值' } }] },
     })]);
     const property = projected.schema.properties?.[itemA] as JsonSchemaObject;
 
-    expect(property.enum).toEqual(['new']);
+    expect((property.items as JsonSchemaObject).enum).toEqual(['new']);
+    expect(property.maxItems).toBe(1);
+    expect(property.uniqueItems).toBe(true);
+    expect(property).not.toHaveProperty('enum');
     expect(property).not.toHaveProperty('oneOf');
-    expect(property.allOf).toEqual([{ type: 'string', minLength: 2 }]);
+    expect(property.allOf).toEqual([{
+      type: 'array', items: { type: 'string', minLength: 2 }, maxItems: 1,
+    }]);
     expect(projected.choiceOptions[itemA]).toEqual([{
       value: 'new',
       label: '新值',
       i18n: { 'zh-CN': '新值' },
     }]);
-    expect(author.properties?.[itemA]).toHaveProperty('enum', ['author-old']);
+    expect(author.properties?.[itemA]).toHaveProperty('items');
   });
 
   it('projects flat multi membership at items and cascader paths at the whole array', () => {
@@ -73,6 +80,7 @@ describe('Form runtime projection', () => {
       },
     });
     const flat = projectCurrentFormFields(parseFormSchema(flatAuthor), [field({
+      dataType: 'string[]',
       kind: 'multi_select',
       valueSchema: { type: 'array', items: { type: 'string', enum: ['stale'] } },
       config: { options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
@@ -88,7 +96,8 @@ describe('Form runtime projection', () => {
         'x-form': { datasetFieldId: 'field-a', position: 0, ui: { widget: 'cascader' } },
       },
     })), [field({
-      kind: 'multi_select',
+      dataType: 'string[]',
+      kind: 'cascader',
       valueSchema: { type: 'array', items: { type: 'string' } },
       config: {
         optionMode: 'cascader',
@@ -113,12 +122,14 @@ describe('Form runtime projection', () => {
   it('makes explicit empty current options authoritative', () => {
     const author = schema({
       [itemA]: {
-        type: 'string',
-        enum: ['legacy'],
+        type: 'array',
+        items: { type: 'string', enum: ['legacy'] },
+        maxItems: 1,
         'x-form': { datasetFieldId: 'field-a', position: 0 },
       },
     }, [itemA]);
     const projected = projectCurrentFormFields(parseFormSchema(author), [field({
+      dataType: 'string[]',
       kind: 'single_select',
       config: { options: [] },
     })]);
@@ -132,7 +143,7 @@ describe('Form runtime projection', () => {
 });
 
 describe('topological Form answer evaluation', () => {
-  it(`${formRuntimeCaseIds.defaultRevealsDependent}: applies an upstream valid default before visibility`, () => {
+  it('applies an upstream valid default before visibility', () => {
     const author = schema({
       [itemB]: {
         type: 'string',
@@ -164,7 +175,7 @@ describe('topological Form answer evaluation', () => {
     expect(inputAnswers).toEqual({ [itemB]: 'visible' });
   });
 
-  it(`${formRuntimeCaseIds.hiddenChainClears}: clears a hidden chain and reports attacks`, () => {
+  it('clears a hidden chain and reports attacks', () => {
     const author = schema({
       [itemC]: {
         type: 'string',
@@ -210,8 +221,10 @@ describe('topological Form answer evaluation', () => {
   it('skips a default invalidated by current constraints so it cannot reveal downstream', () => {
     const author = schema({
       [itemA]: {
-        type: 'string',
-        default: 'deleted',
+        type: 'array',
+        items: { type: 'string' },
+        maxItems: 1,
+        default: ['deleted'],
         'x-form': { datasetFieldId: 'field-a', position: 0, ui: { widget: 'selector' } },
       },
       [itemB]: {
@@ -226,7 +239,9 @@ describe('topological Form answer evaluation', () => {
     const parsed = parseFormSchema(author);
     const projected = projectCurrentFormFields(parsed, [
       field({
+        dataType: 'string[]',
         kind: 'single_select',
+        valueSchema: { type: 'array', items: { type: 'string' }, maxItems: 1 },
         config: { options: [{ value: 'current', label: 'Current' }] },
       }),
       field({ id: 'field-b' }),

@@ -32,7 +32,6 @@ import {
   formatDatasetCellValue,
   formatDatasetFieldValue,
   getDatasetCellValue,
-  getDatasetFieldOptions,
 } from './dataset-query';
 import type {
   DatasetCellCoordinates,
@@ -398,7 +397,9 @@ function getFieldIcon(field: DatasetFieldDefinition): string {
     text: 'i-solar-text-field-bold-duotone',
     long_text: 'i-solar-document-text-bold-duotone',
     number: 'i-solar-hashtag-bold-duotone',
-    boolean: 'i-solar-check-square-bold-duotone',
+    percent: 'i-solar-hashtag-bold-duotone',
+    currency: 'i-solar-hashtag-bold-duotone',
+    checkbox: 'i-solar-check-square-bold-duotone',
     date: 'i-solar-calendar-date-bold-duotone',
     time: 'i-solar-clock-circle-bold-duotone',
     datetime: 'i-solar-calendar-bold-duotone',
@@ -406,6 +407,8 @@ function getFieldIcon(field: DatasetFieldDefinition): string {
     url: 'i-solar-link-circle-bold-duotone',
     single_select: 'i-solar-list-arrow-down-minimalistic-bold-duotone',
     multi_select: 'i-solar-list-check-bold-duotone',
+    cascader: 'i-solar-hierarchy-2-bold-duotone',
+    tags: 'i-solar-tag-bold-duotone',
     json: 'i-solar-code-2-bold-duotone',
     relation: 'i-solar-branching-paths-down-bold-duotone',
   })[field.kind];
@@ -446,7 +449,7 @@ function isCellReadonly(rowId: string, field: DatasetFieldDefinition): boolean {
 }
 
 function requestCellEdit(rowId: string, field: DatasetFieldDefinition): void {
-  if (field.kind === 'relation'
+  if (field.dataType === 'relation'
     && props.relationOptionStates[field.id]?.status === 'error') {
     emit('relationOptionsRequest', { fieldId: field.id });
   }
@@ -505,12 +508,8 @@ function toggleRow(rowId: string, value: boolean | 'indeterminate'): void {
 function formatGroupKey(group: DatasetGroupSummary): string {
   if (group.groupKey === null || !props.query.group) return '空值';
   const field = props.fields.find((item) => item.id === props.query.group?.fieldId);
-  if (field?.kind === 'relation' || field?.kind === 'single_select') {
-    const option = getDatasetFieldOptions(field, props.relationOptions)
-      .find((item) => item.value === String(group.groupKey));
-    if (option) return option.label;
-  }
-  return formatDatasetCellValue(group.groupKey) || '空值';
+  if (!field) return formatDatasetCellValue(group.groupKey) || '空值';
+  return formatDatasetFieldValue(field, group.groupKey) || '空值';
 }
 
 function aggregateLabels(group: DatasetGroupSummary): string[] {

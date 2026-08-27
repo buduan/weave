@@ -4,6 +4,7 @@ import type {
   AvailableIfLeafOperator,
 } from '@weave/types';
 
+import { unwrapSingletonArray } from './dataset-field-types';
 import { canonicalizeJson } from './json';
 import { isEmptyJsonValue, isRecord } from './json-guards';
 
@@ -127,11 +128,12 @@ export function evaluateAvailableIf(
   if ('condition' in expression) return !evaluateAvailableIf(expression.condition, values);
 
   // 叶子表达式。
-  const current = values[expression.fieldId];
-  if (expression.operator === 'is_empty') return isEmptyJsonValue(current);
-  if (expression.operator === 'is_not_empty') return !isEmptyJsonValue(current);
+  const raw = values[expression.fieldId];
+  if (expression.operator === 'is_empty') return isEmptyJsonValue(raw);
+  if (expression.operator === 'is_not_empty') return !isEmptyJsonValue(raw);
   // 字段缺失时（除空值判断外）返回 false。
-  if (current === undefined) return false;
+  if (raw === undefined) return false;
+  const current = unwrapSingletonArray(raw) as JsonValue;
 
   switch (expression.operator) {
     case 'equals':

@@ -75,6 +75,7 @@ function currentFields() {
     {
       id: 'field-a',
       datasetId: 'dataset-1',
+      dataType: 'string_array',
       kind: 'single_select',
       valueSchema: { type: 'string', enum: ['yes', 'no'] },
       config: {},
@@ -87,6 +88,7 @@ function currentFields() {
     {
       id: 'field-b',
       datasetId: 'dataset-1',
+      dataType: 'string',
       kind: 'text',
       valueSchema: { type: 'string' },
       config: {},
@@ -240,6 +242,7 @@ describe('Form submission validation and idempotency', () => {
       {
         ...currentFields()[1],
         id: 'field-city',
+        dataType: 'relation',
         kind: 'relation',
         relationCardinality: 'one',
         relationTargetDatasetId: 'dataset-cities',
@@ -464,8 +467,18 @@ describe('Subject-row filling and update', () => {
       },
       datasetField: {
         findMany: vi.fn().mockResolvedValue([
-          { id: 'field-a', kind: 'text', relationCardinality: null },
-          { id: 'field-b', kind: 'relation', relationCardinality: 'many' },
+          {
+            id: 'field-a',
+            dataType: 'string',
+            kind: 'text',
+            relationCardinality: null,
+          },
+          {
+            id: 'field-b',
+            dataType: 'relation',
+            kind: 'relation',
+            relationCardinality: 'many',
+          },
         ]),
       },
     };

@@ -28,6 +28,7 @@ export async function createDatasetDefinitionVersion(
     key: field.key,
     name: field.name,
     description: field.description,
+    dataType: field.dataType,
     kind: field.kind,
     valueSchema: field.valueSchema,
     config: field.config,

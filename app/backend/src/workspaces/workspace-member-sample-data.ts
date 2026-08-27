@@ -1,5 +1,6 @@
 import {
   DatasetCollaboratorRole,
+  DatasetFieldDataType,
   DatasetFieldKind,
   DatasetSubjectMode,
   DatasetType,
@@ -106,6 +107,7 @@ export async function ensureWorkspaceMemberSampleData(
         create: {
           key: 'name',
           name: '姓名',
+          dataType: DatasetFieldDataType.string,
           kind: DatasetFieldKind.text,
           valueSchema: { type: 'string', minLength: 1, maxLength: 128 },
           config: {},

@@ -2,7 +2,12 @@
 import type { DatasetFieldDefinition, JsonValue } from '@weave/types';
 import { useDocumentVisibility, watchDebounced } from '@vueuse/core';
 import { computed, shallowRef, watch } from '#imports';
-import { normalizeDatasetChoiceConfig, parseDatasetFieldInputValue } from '@weave/utils';
+import {
+  isChoiceKind,
+  isStringArrayDataType,
+  normalizeDatasetChoiceConfig,
+  parseDatasetFieldInputValue,
+} from '@weave/utils';
 import { getDatasetCellFinalizeActions } from './dataset-cell';
 import { getDatasetFieldOptions } from './dataset-query';
 import FormItemsCascader from '../form/items/Cascader.vue';
@@ -32,9 +37,9 @@ const emit = defineEmits<{
 type DraftValue = boolean | string | string[];
 
 function toDraftValue(value: JsonValue): DraftValue {
-  if (props.field.kind === 'boolean') return value === true;
-  if (props.field.kind === 'multi_select'
-    || (props.field.kind === 'relation' && props.field.relationCardinality === 'many')) {
+  if (props.field.dataType === 'boolean') return value === true;
+  if (isStringArrayDataType(props.field.dataType)
+    || (props.field.dataType === 'relation' && props.field.relationCardinality === 'many')) {
     return Array.isArray(value) ? value.map((item) => String(item)) : [];
   }
   if (props.field.kind === 'json') {
@@ -55,27 +60,28 @@ const options = computed(() => getDatasetFieldOptions(
   props.relationOptions,
 ));
 const cascaderConfig = computed(() => {
-  if (props.field.kind !== 'multi_select') return null;
+  if (props.field.kind !== 'cascader') return null;
   try {
     const config = normalizeDatasetChoiceConfig(props.field.kind, props.field.config);
-    return config.optionMode === 'cascader'
-      ? { ...config, options: toFormItemOptions(config.options) }
-      : null;
+    return { ...config, options: toFormItemOptions(config.options) };
   } catch {
     return null;
   }
 });
 const isMultiple = computed(() => props.field.kind === 'multi_select'
-  || (props.field.kind === 'relation' && props.field.relationCardinality === 'many'));
-const isSelectEditor = computed(() => props.field.kind === 'single_select'
-  || (props.field.kind === 'multi_select' && !cascaderConfig.value)
-  || props.field.kind === 'relation');
-const selectDraft = computed<string | string[]>(() => (Array.isArray(draft.value)
-  ? draft.value
-  : String(draft.value)));
+  || props.field.kind === 'tags'
+  || (props.field.dataType === 'relation' && props.field.relationCardinality === 'many'));
+const isSelectEditor = computed(() => isChoiceKind(props.field.kind)
+  || props.field.kind === 'tags'
+  || props.field.dataType === 'relation');
+const selectDraft = computed<string | string[]>(() => {
+  if (isMultiple.value) return Array.isArray(draft.value) ? draft.value : [];
+  if (Array.isArray(draft.value)) return draft.value[0] ?? '';
+  return String(draft.value);
+});
 const cascaderDraft = computed<string[]>(() => (Array.isArray(draft.value) ? draft.value : []));
 const inputType = computed(() => {
-  if (props.field.kind === 'number') return 'number';
+  if (props.field.dataType === 'number') return 'number';
   if (props.field.kind === 'date') return 'date';
   if (props.field.kind === 'time') return 'time';
   if (props.field.kind === 'datetime') return 'datetime-local';
@@ -126,7 +132,7 @@ watch(documentVisibility, (visibility) => {
 });
 
 watch(selectOpen, (isOpen) => {
-  if (isOpen && props.field.kind === 'relation') requestRelationOptions();
+  if (isOpen && props.field.dataType === 'relation') requestRelationOptions();
   if (!isOpen && blurredWhileSelectOpen.value) {
     blurredWhileSelectOpen.value = false;
     finalize();
@@ -134,10 +140,14 @@ watch(selectOpen, (isOpen) => {
 });
 
 watchDebounced(relationSearch, (search) => {
-  if (selectOpen.value && props.field.kind === 'relation') requestRelationOptions(search);
+  if (selectOpen.value && props.field.dataType === 'relation') requestRelationOptions(search);
 }, { debounce: 250 });
 
 function updateDraft(value: unknown): void {
+  if (props.field.kind === 'single_select' && typeof value === 'string') {
+    draft.value = value === '' ? [] : [value];
+    return;
+  }
   if (Array.isArray(value)) {
     draft.value = value.map((item) => String(item));
   } else if (typeof value === 'boolean') {
@@ -192,7 +202,7 @@ watch(() => props.relationOptionState?.forbidden, (forbidden) => {
     />
 
     <UCheckbox
-      v-else-if="field.kind === 'boolean'"
+      v-else-if="field.kind === 'checkbox'"
       :model-value="draft === true"
       label="已选择"
       autofocus
@@ -215,7 +225,7 @@ watch(() => props.relationOptionState?.forbidden, (forbidden) => {
     />
 
     <USelectMenu
-      v-else-if="isSelectEditor && field.kind === 'relation'"
+      v-else-if="isSelectEditor && field.dataType === 'relation'"
       v-model:open="selectOpen"
       :model-value="selectDraft"
       :items="options"

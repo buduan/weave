@@ -1,6 +1,6 @@
 import type {
+  DatasetFieldDataType,
   DatasetFieldDefinition,
-  DatasetFieldKind,
   FormWidget,
   JsonSchemaObject,
 } from '@weave/types';
@@ -26,7 +26,7 @@ export interface FormTemplateCreateContext {
 
 export interface FormItemTemplate {
   accepts: (field: DatasetFieldDefinition) => boolean;
-  compatibleDatasetKinds: readonly DatasetFieldKind[];
+  compatibleDataTypes: readonly DatasetFieldDataType[];
   createProperty: (context: FormTemplateCreateContext) => JsonSchemaObject;
   icon: string;
   label: string;

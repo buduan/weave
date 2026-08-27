@@ -58,6 +58,7 @@ const field: DatasetFieldDefinition = {
   key: 'name',
   name: 'Name',
   description: null,
+  dataType: 'string',
   kind: 'text',
   valueSchema: { type: 'string' },
   config: {},

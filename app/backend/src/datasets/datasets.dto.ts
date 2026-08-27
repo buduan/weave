@@ -124,8 +124,8 @@ export class CreateDatasetFieldDto {
   @IsEnum(DatasetFieldKind)
   public kind!: DatasetFieldKind;
 
-  @IsDefined()
-  public valueSchema!: unknown;
+  @IsOptional()
+  public valueSchema?: unknown;
 
   @IsOptional()
   @IsObject()
@@ -173,8 +173,8 @@ export class CreateDatasetPanelFieldDto {
   @IsEnum(DatasetFieldKind)
   public kind!: DatasetFieldKind;
 
-  @IsDefined()
-  public valueSchema!: unknown;
+  @IsOptional()
+  public valueSchema?: unknown;
 
   @IsObject()
   public config!: Record<string, unknown>;
@@ -215,6 +215,10 @@ export class UpdateDatasetFieldDto {
   @IsString()
   @MaxLength(2_000)
   public description?: string;
+
+  @IsOptional()
+  @IsEnum(DatasetFieldKind)
+  public kind?: DatasetFieldKind;
 
   @IsOptional()
   @IsDefined()
