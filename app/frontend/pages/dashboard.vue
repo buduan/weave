@@ -71,7 +71,7 @@ definePageMeta({
           </div>
         </template>
 
-        <div class="grid min-h-[30rem] place-items-center bg-muted p-6 sm:p-10">
+        <div class="grid min-h-120 place-items-center bg-muted p-6 sm:p-10">
           <div class="max-w-md text-center">
             <span
               class="mx-auto grid size-12 place-items-center rounded-2xl bg-primary/10

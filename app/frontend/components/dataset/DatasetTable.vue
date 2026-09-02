@@ -66,7 +66,7 @@ function emitCellCommit(payload: DatasetCellCoordinates & {
 <template>
   <section
     :class="[
-      'flex h-full min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-lg',
+      'flex h-full min-h-112 min-w-0 flex-col overflow-hidden rounded-lg',
       'border border-slate-200 bg-white',
     ]"
     :aria-label="`${dataset.name}数据表`"

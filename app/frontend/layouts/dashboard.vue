@@ -93,13 +93,13 @@ async function logout(): Promise<void> {
 
 <template>
   <div
-    class="min-h-[100dvh] bg-muted motion-safe:transition-[grid-template-columns]
+    class="min-h-dvh bg-muted motion-safe:transition-[grid-template-columns]
       motion-safe:duration-300 motion-safe:ease-in-out lg:grid"
     :class="desktopSidebarCollapsed
       ? 'lg:grid-cols-[5rem_minmax(0,1fr)]'
       : 'lg:grid-cols-[18rem_minmax(0,1fr)]'"
   >
-    <aside class="sticky top-0 hidden h-[100dvh] lg:block">
+    <aside class="sticky top-0 hidden h-dvh lg:block">
       <DashboardSidebar
         v-model:collapsed="desktopSidebarCollapsed"
         v-model:workspace-id="workspaceId"
@@ -141,9 +141,9 @@ async function logout(): Promise<void> {
       <main
         id="dashboard-content"
         class="dashboard-canvas min-h-[calc(100dvh-4rem)]
-          lg:min-h-0 lg:h-[100dvh] lg:overflow-hidden"
+          lg:min-h-0 lg:h-dvh lg:overflow-hidden"
       >
-        <div class="mx-auto w-full max-w-[92rem] lg:h-full">
+        <div class="mx-auto w-full max-w-368 lg:h-full">
           <slot />
         </div>
       </main>
