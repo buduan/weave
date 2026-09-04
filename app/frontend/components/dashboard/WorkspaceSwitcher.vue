@@ -41,7 +41,7 @@ const workspaceItems = computed<DropdownMenuItem[][]>(() => [
     :content="{ align: 'start', side: 'bottom', sideOffset: 8 }"
     :portal="false"
     :ui="{
-      content: 'z-50 w-[17rem] rounded-lg bg-default shadow-xl ring-1 ring-default',
+      content: 'z-50 w-68 rounded-lg bg-default shadow-xl ring-1 ring-default',
     }"
   >
     <UButton

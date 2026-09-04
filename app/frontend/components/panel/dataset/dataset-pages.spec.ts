@@ -37,7 +37,7 @@ describe('Dataset dashboard pages', () => {
 
   it('aligns the list layout with the Notion-style form index', () => {
     const list = source('./List.vue');
-    expect(list).toContain('max-w-[90rem]');
+    expect(list).toContain('max-w-360');
     expect(list).toContain('<PanelCommonNavigation />');
     expect(list).toContain('divide-y divide-default/70');
     expect(list).not.toContain('rounded-lg border border-default bg-default');

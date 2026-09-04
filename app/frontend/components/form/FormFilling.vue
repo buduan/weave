@@ -137,7 +137,7 @@ function submit(): void {
 <template>
   <article
     :lang="locale"
-    class="overflow-hidden rounded-[1.75rem] border border-default bg-default shadow-xl
+    class="overflow-hidden rounded-3xl border border-default bg-default shadow-xl
       shadow-neutral-950/5"
   >
     <header

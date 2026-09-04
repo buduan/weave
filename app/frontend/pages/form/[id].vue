@@ -151,7 +151,7 @@ async function login(): Promise<void> {
 </script>
 
 <template>
-  <main class="min-h-[100dvh] overflow-x-hidden bg-muted text-default">
+  <main class="min-h-dvh overflow-x-hidden bg-muted text-default">
     <div class="h-1 bg-primary" />
     <div class="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-12 lg:py-16">
       <div class="mb-6 flex items-center justify-between gap-4 px-1">
@@ -176,7 +176,7 @@ async function login(): Promise<void> {
 
       <section
         v-if="status === 'pending'"
-        class="rounded-[1.75rem] border border-default bg-default p-6 shadow-xl
+        class="rounded-3xl border border-default bg-default p-6 shadow-xl
           shadow-neutral-950/5 sm:p-9"
         role="status"
         aria-live="polite"
@@ -199,7 +199,7 @@ async function login(): Promise<void> {
 
       <section
         v-else-if="loadError"
-        class="rounded-[1.75rem] border border-default bg-default px-6 py-12 text-center
+        class="rounded-3xl border border-default bg-default px-6 py-12 text-center
           shadow-xl shadow-neutral-950/5 sm:px-10 sm:py-16"
         role="alert"
       >
