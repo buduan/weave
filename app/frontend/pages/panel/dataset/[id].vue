@@ -12,7 +12,7 @@ const datasetId = computed(() => String(route.params.id));
 </script>
 
 <template>
-  <div class="h-[calc(100dvh-4rem)] min-h-0 overflow-hidden lg:h-full">
+  <div class="h-[calc(100dvh-4rem)] min-h-0 overflow-hidden lg:h-dvh">
     <PanelDatasetEditor :dataset-id="datasetId" />
   </div>
 </template>
