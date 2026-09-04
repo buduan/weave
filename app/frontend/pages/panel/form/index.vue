@@ -235,7 +235,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto w-full max-w-[90rem] px-4 py-6 sm:px-8 lg:px-12">
+  <div class="mx-auto w-full max-w-360 px-4 py-6 sm:px-8 lg:px-12">
     <PanelCommonNavigation />
 
     <main class="mt-8">
@@ -341,7 +341,7 @@ onMounted(async () => {
         v-else
         class="overflow-x-auto"
       >
-        <table class="w-full min-w-[58rem] text-left text-sm">
+        <table class="w-full min-w-232 text-left text-sm">
           <thead class="border-b border-default text-xs font-medium text-dimmed">
             <tr>
               <th class="px-3 py-3">

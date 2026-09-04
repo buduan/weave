@@ -261,7 +261,7 @@ function emitDelete(): void { emit('delete', props.item.id); }
 
 <template>
   <div
-    class="overflow-hidden rounded-xl border transition-[border-color,box-shadow]
+    class="relative overflow-hidden rounded-xl border transition-[border-color,box-shadow]
       duration-200 ease-out"
     :class="[
       editing ? 'border-primary shadow-md shadow-primary/20' : 'border-transparent',
