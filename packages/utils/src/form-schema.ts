@@ -161,9 +161,13 @@ function validateUi(
   }
   if (ui.options === undefined) return;
   const options = asRecord(ui.options, 'Form item options');
-  assertKeys(options, ['filter', 'labelFieldId'], 'Form item options');
+  assertKeys(options, ['filter', 'fromAuthenticatedEmail', 'labelFieldId'], 'Form item options');
   if (options.labelFieldId !== undefined) {
     assertString(options.labelFieldId, 'Form item options labelFieldId');
+  }
+  if (options.fromAuthenticatedEmail !== undefined
+    && typeof options.fromAuthenticatedEmail !== 'boolean') {
+    throw new TypeError('Form item options fromAuthenticatedEmail must be a boolean');
   }
   if (options.filter !== undefined) validateFilter(options.filter, itemIds);
 }

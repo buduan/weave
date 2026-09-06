@@ -4,15 +4,15 @@ import {
   createDatasetPreviewRows,
   datasetPreviewFields,
 } from '~/fixtures/dataset-preview';
-import { getDatasetCellFinalizeActions } from './dataset-cell';
+import { getDatasetCellFinalizeActions } from '~/components/dataset/dataset-cell';
 import {
   applyDatasetQuery,
   cloneDatasetQuery,
   formatDatasetFieldValue,
   getDatasetFilterOperators,
   parseDatasetFieldInputValue,
-} from './dataset-query';
-import type { DatasetFilterOperator, DatasetTableQuery } from './types';
+} from '~/components/dataset/dataset-query';
+import type { DatasetFilterOperator, DatasetTableQuery } from '~/components/dataset/types';
 
 function operatorValues(fieldId: string): DatasetFilterOperator[] {
   const field = datasetPreviewFields.find((item) => item.id === fieldId);

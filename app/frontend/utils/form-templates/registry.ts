@@ -1,6 +1,7 @@
 import type { DatasetFieldDefinition, FormWidget } from '@weave/types';
 import { cascaderTemplate } from './cascader';
 import { checkboxTemplate } from './checkbox';
+import { emailTemplate } from './email';
 import { inputTemplate } from './input';
 import { radioTemplate } from './radio';
 import { selectorTemplate } from './selector';
@@ -10,6 +11,7 @@ import type { FormItemTemplate } from './types';
 
 export const formItemTemplates = [
   inputTemplate,
+  emailTemplate,
   textareaTemplate,
   checkboxTemplate,
   radioTemplate,
@@ -32,6 +34,7 @@ export function inferFormItemTemplate(field: DatasetFieldDefinition): FormItemTe
   const preferred: Partial<Record<DatasetFieldDefinition['kind'], FormWidget>> = {
     cascader: 'cascader',
     checkbox: 'checkbox',
+    email: 'email',
     long_text: 'textarea',
     multi_select: 'selector',
     relation: 'selector',

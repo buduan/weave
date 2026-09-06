@@ -97,9 +97,10 @@ export class FormDefinitionValidatorService {
     const fieldsById = new Map(context.fields.map((field) => [field.id, field]));
     const datasetsById = new Map(context.targetDatasets.map((dataset) => [dataset.id, dataset]));
     // 提取所有 Form item → DatasetField 映射。
-    const mappings = parsed.items.map(({ id, extension }) => ({
+    const mappings = parsed.items.map(({ id, extension, widget }) => ({
       itemId: id,
       extension,
+      widget,
     }));
 
     // 同一 Schema 中一个 DatasetField 最多被一个 Form item 映射。
@@ -109,7 +110,7 @@ export class FormDefinitionValidatorService {
     }
 
     // 逐项校验字段映射。
-    mappings.forEach(({ itemId, extension }) => {
+    mappings.forEach(({ itemId, extension, widget }) => {
       const fieldId = extension.datasetFieldId as string;
       const field = fieldsById.get(fieldId);
       if (!field || field.archivedAt || field.datasetId !== context.dataset.id) {
@@ -125,6 +126,17 @@ export class FormDefinitionValidatorService {
         throw new BadRequestException(
           `Form widget is incompatible with Dataset field dataType: ${itemId}`,
         );
+      }
+
+      if (extension.ui?.options?.fromAuthenticatedEmail) {
+        if (widget !== 'email') {
+          throw new BadRequestException(`Authenticated email requires email widget: ${itemId}`);
+        }
+        if (context.submissionAccess !== FormSubmissionAccess.authentication_required) {
+          throw new BadRequestException(
+            `Authenticated email requires login: ${itemId}`,
+          );
+        }
       }
 
       // 关联字段额外校验。

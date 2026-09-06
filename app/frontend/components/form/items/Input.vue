@@ -10,6 +10,7 @@ interface InputProps {
   type?: string;
   placeholder?: string;
   disabled?: boolean;
+  readonly?: boolean;
   required?: boolean;
   size?: InputSize;
   maxLength?: number;
@@ -42,7 +43,8 @@ const inputModel = computed<string>({
     class="w-full"
     :type="type ?? 'text'"
     :placeholder="placeholder"
-    :disabled="disabled"
+    :disabled="disabled || readonly"
+    :readonly="readonly"
     :required="required"
     :maxlength="maxLength"
     :size="size"

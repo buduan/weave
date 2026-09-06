@@ -32,6 +32,7 @@ export type FormSubmissionOperation = (typeof formSubmissionOperations)[number];
 /** Form renderer 支持的规范化 widget 名称。 */
 export const formWidgets = [
   'input',
+  'email',
   'textarea',
   'checkbox',
   'radio',
@@ -131,9 +132,11 @@ export interface FormItemI18n {
   title?: LocalizedText;
 }
 
-/** Form item 的 UI 选项（关联筛选、标签字段等）。 */
+/** Form item 的 UI 选项（关联筛选、标签字段、登录态邮箱等）。 */
 export interface FormItemUiOptions {
   filter?: RelationFilterExpression;
+  /** 为 true 时填写值只来自当前登录用户邮箱，提交时由服务端覆盖。 */
+  fromAuthenticatedEmail?: boolean;
   labelFieldId?: string;
 }
 

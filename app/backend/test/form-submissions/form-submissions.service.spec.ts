@@ -409,6 +409,160 @@ describe('Form submission validation and idempotency', () => {
     expect(queries.every((query) => query.strings.join('').includes('FOR SHARE'))).toBe(true);
   });
 
+  it('overwrites client email answers from the authenticated user', async () => {
+    const record = form(FormSubmissionAccess.authentication_required);
+    record.activeVersion.schema.properties[itemB] = {
+      type: 'string',
+      format: 'email',
+      'x-form': {
+        datasetFieldId: 'field-b',
+        position: 1,
+        ui: { widget: 'email', options: { fromAuthenticatedEmail: true } },
+      },
+    };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: 'submission-email',
+          formId: 'form-1',
+          formVersionId: 'version-1',
+          datasetId: 'dataset-1',
+          rowId: 'row-created',
+          rowVersionId: 'row-version-created',
+          submitterUserId: 'user-1',
+          operation: FormSubmissionOperation.created,
+          submittedAt: new Date('2026-08-08T08:00:00.000Z'),
+        }),
+      },
+      datasetField: { findMany: vi.fn().mockResolvedValue(currentFields()) },
+      datasetRowSubject: { findUnique: vi.fn().mockResolvedValue(null) },
+      datasetRow: { create: vi.fn().mockResolvedValue({ id: 'row-created', revision: 1 }) },
+      datasetRelation: { createMany: vi.fn() },
+      datasetRowVersion: { create: vi.fn().mockResolvedValue({ id: 'row-version-created' }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ email: 'owner@example.com' }) },
+    };
+    const prisma = {
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const schemas = {
+      validateRow: vi.fn((_fields, normalized) => ({
+        values: normalized.values,
+        relations: new Map(),
+      })),
+    };
+    const actor = {
+      userId: 'user-1',
+      workspaceId: 1,
+      sessionId: 'session-1',
+      permissions: [],
+      isSystemAdmin: false,
+      isWorkspaceAdmin: false,
+    };
+
+    await service(prisma, {
+      audit: { record: vi.fn() },
+      rateLimit: { consume: vi.fn() },
+      relationValidation: { validate: vi.fn().mockResolvedValue([]) },
+      schemas,
+    }).submitByPublicId('form-1', {
+      answers: { [itemA]: 'no', [itemB]: 'attacker@example.com' },
+    }, undefined, actor, { networkIdentity: '127.0.0.1' });
+
+    expect(schemas.validateRow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        values: expect.objectContaining({ 'field-b': 'owner@example.com' }),
+      }),
+      {},
+      false,
+    );
+    expect(tx.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      select: { email: true },
+    });
+  });
+
+  it('does not overwrite a hidden authenticated email field', async () => {
+    const record = form(FormSubmissionAccess.authentication_required);
+    record.activeVersion.schema.properties[itemB] = {
+      type: 'string',
+      format: 'email',
+      'x-form': {
+        datasetFieldId: 'field-b',
+        position: 1,
+        availableIf: { fieldId: itemA, operator: 'equals', value: 'yes' },
+        ui: { widget: 'email', options: { fromAuthenticatedEmail: true } },
+      },
+    };
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: 'submission-hidden-email',
+          formId: 'form-1',
+          formVersionId: 'version-1',
+          datasetId: 'dataset-1',
+          rowId: 'row-created',
+          rowVersionId: 'row-version-created',
+          submitterUserId: 'user-1',
+          operation: FormSubmissionOperation.created,
+          submittedAt: new Date('2026-08-08T08:00:00.000Z'),
+        }),
+      },
+      datasetField: { findMany: vi.fn().mockResolvedValue(currentFields()) },
+      datasetRowSubject: { findUnique: vi.fn().mockResolvedValue(null) },
+      datasetRow: { create: vi.fn().mockResolvedValue({ id: 'row-created', revision: 1 }) },
+      datasetRelation: { createMany: vi.fn() },
+      datasetRowVersion: { create: vi.fn().mockResolvedValue({ id: 'row-version-created' }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ email: 'owner@example.com' }) },
+    };
+    const prisma = {
+      form: { findUnique: vi.fn().mockResolvedValue(record) },
+      formSubmission: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const schemas = {
+      validateRow: vi.fn((_fields, normalized) => ({
+        values: normalized.values,
+        relations: new Map(),
+      })),
+    };
+    const actor = {
+      userId: 'user-1',
+      workspaceId: 1,
+      sessionId: 'session-1',
+      permissions: [],
+      isSystemAdmin: false,
+      isWorkspaceAdmin: false,
+    };
+
+    await service(prisma, {
+      audit: { record: vi.fn() },
+      rateLimit: { consume: vi.fn() },
+      relationValidation: { validate: vi.fn().mockResolvedValue([]) },
+      schemas,
+    }).submitByPublicId('form-1', {
+      answers: { [itemA]: 'no' },
+    }, undefined, actor, { networkIdentity: '127.0.0.1' });
+
+    expect(schemas.validateRow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        values: expect.not.objectContaining({ 'field-b': 'owner@example.com' }),
+      }),
+      {},
+      false,
+    );
+    expect(tx.user.findUnique).not.toHaveBeenCalled();
+  });
+
   it('rejects a new write when the public rate limiter denies it', async () => {
     const prisma = {
       form: { findUnique: vi.fn().mockResolvedValue(form()) },

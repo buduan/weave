@@ -17,9 +17,7 @@ import {
   createRelationOptionRequest,
   isLatestRelationRequest,
 } from '~/utils/form-relation-options';
-import {
-  resolveFormComponent,
-} from './component-map';
+import { resolveFormComponent } from './component-map';
 import { resolveInputType, resolveWidgetName } from './widget-resolution';
 import type {
   FocusableInputInstance,
@@ -57,6 +55,9 @@ const resolvedDescription = computed(() => props.item.description);
 const fieldRequired = computed(() => props.item.required);
 const widgetName = computed(() => resolveWidgetName(props.item.widget));
 const leafComponent = computed(() => resolveFormComponent(widgetName.value));
+const fromAuthenticatedEmail = computed(() => Boolean(
+  props.item.extension.ui?.options?.fromAuthenticatedEmail,
+));
 
 const relationDependencies = computed(() => getRelationFilterDependencies(
   props.item.extension.ui?.options?.filter,
@@ -145,8 +146,11 @@ const leafProps = computed(() => {
     disabled: props.allowEdit,
     'aria-label': resolvedTitle.value,
   };
-  if (widgetName.value === 'input') {
+  if (widgetName.value === 'input' || widgetName.value === 'email') {
     base.type = resolveInputType(props.item.property);
+  }
+  if (fromAuthenticatedEmail.value) {
+    base.readonly = true;
   }
   if (
     widgetName.value === 'checkbox'

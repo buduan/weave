@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 function source(relativePath: string): string {
-  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
+  return readFileSync(fileURLToPath(new URL(
+    `../../../../components/panel/dataset/${relativePath}`,
+    import.meta.url,
+  )), 'utf8');
 }
 
 describe('Dataset dashboard pages', () => {

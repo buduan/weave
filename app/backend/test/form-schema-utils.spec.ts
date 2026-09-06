@@ -154,6 +154,29 @@ describe('shared Form Schema utilities', () => {
       .toThrow('Unknown availableIf Form item');
   });
 
+  it('accepts fromAuthenticatedEmail and rejects a non-boolean value', () => {
+    const itemId = 'q_00000000-0000-4000-8000-000000000001';
+    const schema = {
+      type: 'object',
+      properties: {
+        [itemId]: {
+          type: 'string',
+          format: 'email',
+          'x-form': {
+            datasetFieldId: 'field-email',
+            position: 0,
+            ui: { widget: 'email', options: { fromAuthenticatedEmail: true } },
+          },
+        },
+      },
+      'x-form': { version: 1, datasetId: 'dataset-1', capture: {} },
+    };
+    expect(() => validateFormSchemaExtensions(schema)).not.toThrow();
+    schema.properties[itemId]['x-form'].ui.options.fromAuthenticatedEmail = 'yes' as never;
+    expect(() => validateFormSchemaExtensions(schema))
+      .toThrow('Form item options fromAuthenticatedEmail must be a boolean');
+  });
+
   it('parses required membership and renders by position instead of property key order', () => {
     const firstId = 'q_00000000-0000-4000-8000-000000000001';
     const secondId = 'q_00000000-0000-4000-8000-000000000002';

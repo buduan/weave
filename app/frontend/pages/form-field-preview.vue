@@ -62,7 +62,7 @@ const mockSchema: JsonSchema = {
           title: { 'zh-CN': '邮箱' },
           placeholder: { 'zh-CN': 'name@example.com' },
         },
-        ui: { widget: 'input' },
+        ui: { widget: 'email' },
       },
     },
     [ids.dept]: {
@@ -213,6 +213,7 @@ function previewField(
 
 const previewFields: Record<FormWidget, DatasetFieldDefinition> = {
   input: previewField('input', 'text', { type: 'string' }),
+  email: previewField('email', 'email', { type: 'string', format: 'email' }),
   textarea: previewField('textarea', 'long_text', { type: 'string' }),
   checkbox: previewField('checkbox', 'checkbox', { type: 'boolean' }),
   radio: previewField('radio', 'single_select', {

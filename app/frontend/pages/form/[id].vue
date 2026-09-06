@@ -80,6 +80,13 @@ const notFound = computed(() => {
 
 onMounted(async () => {
   if (loadError.value && !notFound.value) await refresh();
+  if (authStore.isAuthenticated && !authStore.profile) {
+    try {
+      await authStore.fetchProfile();
+    } catch {
+      // Keep the fill page usable; backend still overwrites authenticated email.
+    }
+  }
 });
 
 const pageTitle = computed(() => resolveLocalizedText(
@@ -235,6 +242,7 @@ async function login(): Promise<void> {
         :key="`${form.id}:${form.version}:${form.submissionContext?.expectedRevision ?? 'create'}`"
         :form="form"
         :authenticated="authStore.isAuthenticated"
+        :authenticated-email="authStore.profile?.email ?? null"
         :pending="submissionPending"
         :submit-error="submitError"
         :submitted="submitted"

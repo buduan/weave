@@ -28,6 +28,7 @@ import type { FormRenderContext } from './types';
 
 const props = defineProps<{
   authenticated: boolean;
+  authenticatedEmail?: string | null;
   form: PublishedFormDefinition;
   loadRelationOptions?: FormRenderContext['loadRelationOptions'];
   pending?: boolean;
@@ -45,15 +46,34 @@ const locale = ref(props.form.defaultLocale);
 const fieldErrors = ref<Record<FormItemId, string>>({});
 const formErrors = ref<string[]>([]);
 
-function resetFillingState(): void {
-  const inputAnswers = cloneJson(props.form.submissionContext?.answers ?? {});
-  const parsed = parseFormSchema(props.form.schema, { mode: 'legacy' });
-  answers.value = evaluateFormAnswers({
+function withAuthenticatedEmail(
+  parsed: ReturnType<typeof parseFormSchema>,
+  inputAnswers: Record<FormItemId, JsonValue | undefined>,
+): Record<FormItemId, JsonValue | undefined> {
+  const evaluated = evaluateFormAnswers({
     parsed,
     runtimeSchema: parsed.schema,
     inputAnswers,
     rejectExplicitHidden: false,
-  }).answers;
+  });
+  const email = props.authenticatedEmail;
+  if (!email) return evaluated.answers;
+  const visible = new Set(evaluated.visibleItemIds);
+  const next = { ...evaluated.answers };
+  parsed.items.forEach((item) => {
+    if (item.extension.ui?.options?.fromAuthenticatedEmail && visible.has(item.id)) {
+      next[item.id] = email;
+    }
+  });
+  return next;
+}
+
+function resetFillingState(): void {
+  const parsed = parseFormSchema(props.form.schema, { mode: 'legacy' });
+  answers.value = withAuthenticatedEmail(
+    parsed,
+    cloneJson(props.form.submissionContext?.answers ?? {}),
+  );
   locale.value = props.form.defaultLocale;
   fieldErrors.value = {};
   formErrors.value = [];
@@ -73,6 +93,15 @@ watch(answers, () => {
   if (Object.keys(fieldErrors.value).length > 0) fieldErrors.value = {};
   if (formErrors.value.length > 0) formErrors.value = [];
 }, { deep: true });
+
+watch(
+  () => props.authenticatedEmail,
+  (email) => {
+    if (!email) return;
+    const parsed = parseFormSchema(props.form.schema, { mode: 'legacy' });
+    answers.value = withAuthenticatedEmail(parsed, answers.value);
+  },
+);
 
 const locales = computed(() => orderFormLocales(
   props.form.defaultLocale,

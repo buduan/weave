@@ -9,7 +9,7 @@ import {
   isDatasetEditorReadonly,
   isDatasetQueryFieldAffecting,
   toggleDatasetGroupId,
-} from './editor-state';
+} from '~/components/panel/dataset/editor-state';
 
 const capabilities: DatasetCapabilities = {
   canUpdateMetadata: true,
@@ -60,7 +60,7 @@ describe('Dataset editor state mapping', () => {
 
   it('retains conflict recovery, lock release, range refresh and relation option states', () => {
     const composable = readFileSync(fileURLToPath(new URL(
-      '../../../composables/useDatasetEditor.ts',
+      '../../../../composables/useDatasetEditor.ts',
       import.meta.url,
     )), 'utf8');
     expect(composable).toContain("apiError.httpStatus === 409 ? 'conflict'");

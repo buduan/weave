@@ -13,10 +13,11 @@ export { resolveInputType, resolveWidgetName } from './widget-resolution';
 
 /**
  * widget 名 → 叶子组件。
- * 每个 items/* 文件对应一种表单数据类型。
+ * `email` 与 `input` 共用单行输入框。
  */
 export const formComponentMap: Record<string, Component> = {
   input: FormItemsInput,
+  email: FormItemsInput,
   textarea: FormItemsTextarea,
   checkbox: FormItemsCheckbox,
   radio: FormItemsRadio,

@@ -41,6 +41,7 @@ const STRING_FORMATS: Partial<Record<DatasetFieldKind, string>> = {
 export const formWidgetDataTypes: Record<FormWidget, readonly DatasetFieldDataType[]> = {
   cascader: ['string[]'],
   checkbox: ['boolean'],
+  email: ['string'],
   input: ['string', 'number'],
   radio: ['string[]'],
   selector: ['string[]', 'relation'],
@@ -52,6 +53,7 @@ export const formWidgetDataTypes: Record<FormWidget, readonly DatasetFieldDataTy
 export const defaultKindForWidget: Record<FormWidget, DatasetFieldKind> = {
   cascader: 'cascader',
   checkbox: 'checkbox',
+  email: 'email',
   input: 'text',
   radio: 'single_select',
   selector: 'single_select',

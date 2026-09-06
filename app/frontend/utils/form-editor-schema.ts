@@ -275,6 +275,21 @@ export function setFormItemRelationOptions(
   }
 }
 
+export function clearAuthenticatedEmailOptions(schema: JsonSchemaObject): JsonSchemaObject {
+  const next = cloneJson(schema);
+  const properties = asSchemaObject(next.properties) ?? {};
+  Object.values(properties).forEach((rawProperty) => {
+    const property = asSchemaObject(rawProperty);
+    const extension = property?.['x-form'] as Record<string, unknown> | undefined;
+    const ui = extension?.ui as Record<string, unknown> | undefined;
+    const options = ui?.options as Record<string, unknown> | undefined;
+    if (!options || !Object.hasOwn(options, 'fromAuthenticatedEmail')) return;
+    delete options.fromAuthenticatedEmail;
+    if (ui && !options.labelFieldId && !options.filter) delete ui.options;
+  });
+  return next;
+}
+
 export function resolveFormItemTemplate(
   schema: JsonSchemaObject,
   fieldId: string,
@@ -366,12 +381,18 @@ export function rebindFormItem(
   if (sourceExtension.availableIf) {
     replacementExtension.availableIf = cloneJson(sourceExtension.availableIf);
   }
+  const sourceUi = sourceExtension.ui as Record<string, unknown> | undefined;
+  const sourceOptions = sourceUi?.options as Record<string, unknown> | undefined;
+  const nextUi = replacementExtension.ui as Record<string, unknown>;
   if (template.settings.relation) {
-    const sourceUi = sourceExtension.ui as Record<string, unknown> | undefined;
-    const sourceOptions = sourceUi?.options as Record<string, unknown> | undefined;
-    const nextUi = replacementExtension.ui as Record<string, unknown>;
     const nextOptions = nextUi.options as Record<string, unknown> | undefined;
     if (sourceOptions?.filter && nextOptions) nextOptions.filter = cloneJson(sourceOptions.filter);
+  }
+  if (sourceOptions?.fromAuthenticatedEmail) {
+    nextUi.options = {
+      ...((nextUi.options as Record<string, unknown> | undefined) ?? {}),
+      fromAuthenticatedEmail: true,
+    };
   }
   const preservedKeys: FormConstraintKey[] = [];
   if (template.settings.string) preservedKeys.push('format', 'maxLength', 'minLength', 'pattern');

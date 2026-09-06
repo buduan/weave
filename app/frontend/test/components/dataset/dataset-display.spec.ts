@@ -6,8 +6,8 @@ import {
   getDatasetDisplayItemOffset,
   getDatasetRowRanges,
   validateDatasetGroupDirectory,
-} from './dataset-display';
-import type { DatasetGroupSummary } from './types';
+} from '~/components/dataset/dataset-display';
+import type { DatasetGroupSummary } from '~/components/dataset/types';
 
 const groups: DatasetGroupSummary[] = [
   {

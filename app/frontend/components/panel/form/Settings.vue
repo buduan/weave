@@ -265,9 +265,13 @@ function updateDefault(raw: string): void {
 }
 
 function emitRelationOptions(next: Partial<FormItemUiOptions>): void {
-  const value = { ...(relationOptions.value ?? {}), ...next };
-  if (!value.labelFieldId && !value.filter) emit('update:relationOptions', undefined);
-  else emit('update:relationOptions', value);
+  const value: FormItemUiOptions = { ...(relationOptions.value ?? {}), ...next };
+  if (!value.fromAuthenticatedEmail) delete value.fromAuthenticatedEmail;
+  if (!value.labelFieldId && !value.filter && !value.fromAuthenticatedEmail) {
+    emit('update:relationOptions', undefined);
+  } else {
+    emit('update:relationOptions', value);
+  }
 }
 
 function updateRelationGroup(group: 'all' | 'any'): void {
@@ -582,6 +586,24 @@ function submitCreateField(): void {
             :model-value="required"
             :disabled="disabled"
             @update:model-value="emit('update:required', Boolean($event))"
+          />
+        </div>
+        <div
+          v-if="selectedTemplate.settings.fromAuthenticatedEmail"
+          class="flex items-center justify-between gap-3 rounded-lg border border-default px-3 py-2"
+        >
+          <div class="min-w-0">
+            <p class="text-sm text-highlighted">
+              仅从登录账号获取邮箱
+            </p>
+            <p class="mt-0.5 text-xs leading-5 text-muted">
+              开启后填写者不可修改。需将提交权限设为「必须登录」。
+            </p>
+          </div>
+          <USwitch
+            :model-value="Boolean(relationOptions?.fromAuthenticatedEmail)"
+            :disabled="disabled || submissionAccess !== 'authentication_required'"
+            @update:model-value="emitRelationOptions({ fromAuthenticatedEmail: Boolean($event) })"
           />
         </div>
 

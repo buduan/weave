@@ -13,7 +13,7 @@ import {
   datasetPreviewFields,
   getDatasetPreviewQueryFingerprint,
   queryDatasetPreviewWindow,
-} from './dataset-preview';
+} from '~/fixtures/dataset-preview';
 
 let rows: DatasetTableRow[];
 

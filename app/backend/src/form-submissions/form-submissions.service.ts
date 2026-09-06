@@ -324,6 +324,13 @@ export class FormSubmissionsService {
             itemIds: evaluated.hiddenSubmittedItemIds,
           });
         }
+        evaluated.answers = await this.applyAuthenticatedEmailAnswers(
+          tx,
+          parsed,
+          evaluated.answers,
+          actor,
+          evaluated.visibleItemIds,
+        );
         const validate = this.ajv.compile(evaluated.effectiveSchema as object);
         if (!validate(evaluated.answers)) {
           throw new BadRequestException({
@@ -738,6 +745,37 @@ export class FormSubmissionsService {
         });
       }
     });
+  }
+
+  /**
+   * 登录态邮箱字段由服务端覆盖，不信任客户端提交值。
+   */
+  private async applyAuthenticatedEmailAnswers(
+    tx: Prisma.TransactionClient,
+    parsed: ParsedFormSchema,
+    answers: Record<string, JsonValue>,
+    actor: AuthenticatedActor | null,
+    visibleItemIds: readonly string[],
+  ): Promise<Record<string, JsonValue>> {
+    const visible = new Set(visibleItemIds);
+    const itemIds = parsed.items
+      .filter((item) => (
+        item.extension.ui?.options?.fromAuthenticatedEmail && visible.has(item.id)
+      ))
+      .map((item) => item.id);
+    if (itemIds.length === 0) return answers;
+    if (!actor) throw new UnauthorizedException('This Form requires authentication');
+    const user = await tx.user.findUnique({
+      where: { id: actor.userId },
+      select: { email: true },
+    });
+    if (!user?.email) {
+      throw new ConflictException('Authenticated email is unavailable');
+    }
+    return {
+      ...answers,
+      ...Object.fromEntries(itemIds.map((itemId) => [itemId, user.email])),
+    };
   }
 
   /**

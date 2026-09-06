@@ -148,9 +148,10 @@ Item 扩展允许的键：
 
 | 字段 | 说明 |
 | --- | --- |
-| `widget` | 渲染组件提示（如 `input`、`textarea`、`radio`、`checkbox`、`selector`、`tags-input`）。 |
+| `widget` | 渲染组件提示（如 `input`、`email`、`textarea`、`radio`、`checkbox`、`selector`、`tags-input`）。`email` 与 `input` 共用输入框组件。 |
 | `options.labelFieldId` | 关联字段选项的展示标签字段。 |
 | `options.filter` | 关联选项筛选（见下节）。 |
+| `options.fromAuthenticatedEmail` | 仅 `email` 使用。为 `true` 时填写值只来自当前登录用户邮箱，字段只读；提交时由服务端覆盖客户端值。该选项要求 Form `submissionAccess` 为 `authentication_required`。 |
 
 前端组件映射见 `app/frontend/components/form/component-map.ts`。`widget` 只影响展示；值的 JSON `type` 跟随所绑 Dataset 列的存储类型，不跟随 `widget` 或列的 `kind`。绑定矩阵见 [`dataset-form-field-types.md`](dataset-form-field-types.md)。值校验仍以标准 JSON Schema 为准。
 
@@ -325,7 +326,7 @@ token 和 `expectedRevision`。锁丢失后页面保留未保存内容但禁用�
       "x-form": {
         "datasetFieldId": "fld_email",
         "i18n": { "title": { "zh-CN": "邮箱" } },
-        "ui": { "widget": "input" }
+        "ui": { "widget": "email" }
       }
     },
     "q_33333333-3333-4333-8333-333333333333": {

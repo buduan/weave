@@ -27,6 +27,7 @@ function propertyShape(
     }
     return { type: 'string' };
   }
+  if (widget === 'email') return { type: 'string', format: 'email' };
   const formats: Partial<Record<DatasetFieldDefinition['kind'], string>> = {
     date: 'date',
     datetime: 'date-time',

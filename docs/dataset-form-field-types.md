@@ -97,11 +97,12 @@ Form Item
 
 ## Form `widget`
 
-现有控件全部保留：
+现有控件全部保留；`email` 与 `input` 共用单行输入框组件：
 
 | widget | 中文 |
 | --- | --- |
 | `input` | 单行输入 |
+| `email` | 邮箱 |
 | `textarea` | 多行文本 |
 | `checkbox` | 复选框 |
 | `radio` | 单选项 |
@@ -114,6 +115,7 @@ Form Item
 | widget | 可绑定的 dataType |
 | --- | --- |
 | `input` | `string`、`number` |
+| `email` | `string` |
 | `textarea` | `string` |
 | `checkbox` | `boolean` |
 | `radio` | `string[]` |
@@ -126,6 +128,7 @@ Form Item
 - 同一 `string[]` 列，表单可以是 Radio、Selector、Cascader 或标签输入，与当前 `kind` 是单选还是多选无关。
 - 列从单选改成多选后，已绑定的 Radio **保持绑定、保持控件**，继续往 `string[]` 里写 0 或 1 项。要改成多选控件，由作者改 `widget`。
 - `input` 的 date / number 等外观由表单项自己的 JSON Schema（如 `format`）决定。绑定时可以抄列上的初值，之后不随 `kind` 转换自动变。
+- `email` 固定 `format: 'email'`，只绑 `string`。
 - `json` 本轮不进表单。
 - `textarea` 可绑定任意 `string` 列（含文本、长文本、日期等）；推荐用在长文本，但不靠 `kind` 做硬限制。
 
@@ -134,6 +137,7 @@ Form Item
 | 拖入 widget | dataType | 默认 kind |
 | --- | --- | --- |
 | `input` | `string` | `text` |
+| `email` | `string` | `email` |
 | `textarea` | `string` | `long_text` |
 | `checkbox` | `boolean` | `checkbox` |
 | `radio` | `string[]` | `single_select` |
@@ -142,6 +146,8 @@ Form Item
 | `tags-input` | `string[]` | `tags` |
 
 绑已有列时，下拉只列出 `dataType` 与当前 widget 兼容、且未被其它 item 占用的字段。
+
+`email` 与 `input` 共用输入框组件，固定 `format: 'email'`，只绑 `string`。
 
 不要用 Form `widget` 去写 Dataset 的选项形态（例如用 Cascader 控件把列改成级联）。级联是列的 `kind`。
 

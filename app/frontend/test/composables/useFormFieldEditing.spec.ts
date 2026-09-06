@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('#imports', async () => import('vue'));
+import {
+  describe, expect, it, vi,
+} from 'vitest';
 
 import {
   useFormFieldEditing,
   useFormFieldEditingState,
-} from './useFormFieldEditing';
+} from '~/composables/useFormFieldEditing';
+
+vi.mock('#imports', async () => import('vue'));
 
 describe('Form inline editing transitions', () => {
   it('switches one active item at a time and ignores stale release from the previous item', () => {

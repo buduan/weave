@@ -63,6 +63,7 @@ Dataset 使用固定的 PostgreSQL 关系模型：普通字段值存储在 `Data
 │       ├── components/          # 认证和 Dashboard 组件
 │       ├── composables/         # 认证流程
 │       ├── stores/               # Pinia 状态
+│       ├── test/                 # 前端 Vitest 测试
 │       └── utils/                # 前端 API、重定向工具
 ├── packages/
 │   ├── types/                   # 跨应用类型和权限注册表

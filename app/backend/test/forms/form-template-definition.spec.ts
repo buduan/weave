@@ -40,6 +40,7 @@ const itemIds = [
   'q_66666666-6666-4666-8666-666666666666',
   'q_77777777-7777-4777-8777-777777777777',
   'q_88888888-8888-4888-8888-888888888888',
+  'q_99999999-9999-4999-8999-999999999999',
 ] as const;
 
 function field(
@@ -74,6 +75,7 @@ describe('frontend template to backend definition boundary', () => {
   it('accepts every registered template plus completed relation and Settings mutations', () => {
     const fieldsByWidget = {
       input: field('field-input', DatasetFieldKind.text, { type: 'string' }),
+      email: field('field-email', DatasetFieldKind.email, { type: 'string', format: 'email' }),
       textarea: field('field-textarea', DatasetFieldKind.long_text, { type: 'string' }),
       checkbox: field('field-checkbox', DatasetFieldKind.checkbox, { type: 'boolean' }),
       radio: field('field-radio', DatasetFieldKind.single_select, {
@@ -109,11 +111,11 @@ describe('frontend template to backend definition boundary', () => {
         position: index,
       }),
     ])) as Record<string, JsonSchemaObject>;
-    const relationItemId = itemIds[7];
+    const relationItemId = itemIds[8];
     properties[relationItemId] = getFormItemTemplate('selector').createProperty({
       datasetField: relation,
       locale: 'zh-CN',
-      position: 7,
+      position: 8,
     });
     const schema: JsonSchemaObject = {
       type: 'object',
@@ -122,7 +124,7 @@ describe('frontend template to backend definition boundary', () => {
       'x-form': { version: 1, datasetId, capture: {} },
     };
     const inputItemId = itemIds[0];
-    const textareaItemId = itemIds[1];
+    const textareaItemId = itemIds[2];
     setFormItemRequired(schema, inputItemId, true);
     setFormItemConstraint(schema, inputItemId, 'pattern', '^[A-Z]+$');
     setFormItemDefault(schema, inputItemId, 'ABC');
@@ -164,6 +166,82 @@ describe('frontend template to backend definition boundary', () => {
     };
 
     expect(() => new FormDefinitionValidatorService().validate(schema, context)).not.toThrow();
+  });
+
+  it('rejects authenticated email when the Form allows anonymous submission', () => {
+    const emailField = field('field-email', DatasetFieldKind.email, {
+      type: 'string', format: 'email',
+    });
+    const schema: JsonSchemaObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [itemIds[0]]: getFormItemTemplate('email').createProperty({
+          datasetField: emailField,
+          locale: 'zh-CN',
+          position: 0,
+        }),
+      },
+      'x-form': { version: 1, datasetId, capture: {} },
+    };
+    setFormItemRelationOptions(schema, itemIds[0], { fromAuthenticatedEmail: true });
+    expect(() => new FormDefinitionValidatorService().validate(schema, {
+      dataset: { id: datasetId, subjectMode: DatasetSubjectMode.none, type: DatasetType.standard },
+      fields: [{ ...emailField, archivedAt: null }],
+      targetDatasets: [],
+      submissionAccess: FormSubmissionAccess.anonymous_allowed,
+      writeMode: FormWriteMode.create_row,
+    })).toThrow('Authenticated email requires login');
+  });
+
+  it('accepts authenticated email when the Form requires login', () => {
+    const emailField = field('field-email', DatasetFieldKind.email, {
+      type: 'string', format: 'email',
+    });
+    const schema: JsonSchemaObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [itemIds[0]]: getFormItemTemplate('email').createProperty({
+          datasetField: emailField,
+          locale: 'zh-CN',
+          position: 0,
+        }),
+      },
+      'x-form': { version: 1, datasetId, capture: {} },
+    };
+    setFormItemRelationOptions(schema, itemIds[0], { fromAuthenticatedEmail: true });
+    expect(() => new FormDefinitionValidatorService().validate(schema, {
+      dataset: { id: datasetId, subjectMode: DatasetSubjectMode.none, type: DatasetType.standard },
+      fields: [{ ...emailField, archivedAt: null }],
+      targetDatasets: [],
+      submissionAccess: FormSubmissionAccess.authentication_required,
+      writeMode: FormWriteMode.create_row,
+    })).not.toThrow();
+  });
+
+  it('rejects authenticated email on a non-email widget', () => {
+    const textField = field('field-text', DatasetFieldKind.text, { type: 'string' });
+    const schema: JsonSchemaObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        [itemIds[0]]: getFormItemTemplate('input').createProperty({
+          datasetField: textField,
+          locale: 'zh-CN',
+          position: 0,
+        }),
+      },
+      'x-form': { version: 1, datasetId, capture: {} },
+    };
+    setFormItemRelationOptions(schema, itemIds[0], { fromAuthenticatedEmail: true });
+    expect(() => new FormDefinitionValidatorService().validate(schema, {
+      dataset: { id: datasetId, subjectMode: DatasetSubjectMode.none, type: DatasetType.standard },
+      fields: [{ ...textField, archivedAt: null }],
+      targetDatasets: [],
+      submissionAccess: FormSubmissionAccess.authentication_required,
+      writeMode: FormWriteMode.create_row,
+    })).toThrow('Authenticated email requires email widget');
   });
 
   it('accepts Radio bound to a multi_select field of the same dataType', () => {

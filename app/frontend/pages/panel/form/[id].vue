@@ -62,6 +62,7 @@ import {
   addFormLocale,
   appendFormItem,
   collectFormLocales,
+  clearAuthenticatedEmailOptions,
   deleteFormItem,
   duplicateFormItem,
   moveFormItem,
@@ -458,7 +459,12 @@ function updateWindow(key: 'closesAt' | 'opensAt', value?: string): void {
 }
 
 function updateSubmissionAccess(value: FormSubmissionAccess): void {
-  markMutation(() => { definition.value!.submissionAccess = value; });
+  markMutation(() => {
+    definition.value!.submissionAccess = value;
+    if (value !== 'authentication_required') {
+      definition.value!.schema = clearAuthenticatedEmailOptions(definition.value!.schema);
+    }
+  });
 }
 
 function updateWriteMode(value: FormWriteMode): void {

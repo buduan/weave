@@ -10,7 +10,7 @@ import {
 import { apiStatuses, type AuthTokens, type UserProfile } from '@weave/types';
 
 import { ApiError } from '~/utils/api';
-import { useAuthStore } from './auth';
+import { useAuthStore } from '~/stores/auth';
 
 const cookies = new Map<string, Ref<string | null>>();
 const api = {

@@ -10,6 +10,7 @@ export interface FormTemplateSettings {
   availableIf: boolean;
   choices?: boolean;
   default: boolean;
+  fromAuthenticatedEmail?: boolean;
   numeric?: boolean;
   placeholder?: boolean;
   relation?: boolean;

@@ -8,7 +8,7 @@ import type {
   DatasetTableEmits,
   DatasetTableProps,
   DatasetTableRow,
-} from './types';
+} from '~/components/dataset/types';
 
 describe('DatasetTable controlled contract', () => {
   it('types sparse props as parent-owned inputs', () => {
