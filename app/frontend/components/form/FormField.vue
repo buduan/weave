@@ -2,28 +2,16 @@
 <script setup lang="ts">
 import {
   computed,
-  inject,
   nextTick,
   ref,
-  shallowRef,
-  watch,
 } from '#imports';
-import type { JsonValue } from '@weave/types';
-import {
-  getRelationFilterDependencies,
-} from '@weave/utils';
 import { useFormFieldEditing } from '~/composables/useFormFieldEditing';
-import {
-  createRelationOptionRequest,
-  isLatestRelationRequest,
-} from '~/utils/form-relation-options';
 import { resolveFormComponent } from './component-map';
-import { resolveInputType, resolveWidgetName } from './widget-resolution';
+import { resolveWidgetName } from './widget-resolution';
 import type {
   FocusableInputInstance,
   ResolvedFormItem,
 } from './types';
-import { formRenderContextKey } from './types';
 
 defineOptions({ name: 'FormField' });
 
@@ -47,150 +35,11 @@ const emit = defineEmits<{
   'update:description': [fieldId: string, value?: string];
 }>();
 
-const formContext = inject(formRenderContextKey, null);
-
-const state = computed(() => formContext?.value.state);
 const resolvedTitle = computed(() => props.item.title);
 const resolvedDescription = computed(() => props.item.description);
 const fieldRequired = computed(() => props.item.required);
 const widgetName = computed(() => resolveWidgetName(props.item.widget));
 const leafComponent = computed(() => resolveFormComponent(widgetName.value));
-const fromAuthenticatedEmail = computed(() => Boolean(
-  props.item.extension.ui?.options?.fromAuthenticatedEmail,
-));
-
-const relationDependencies = computed(() => getRelationFilterDependencies(
-  props.item.extension.ui?.options?.filter,
-));
-const hasRelationOptions = computed(() => (
-  typeof props.item.extension.ui?.options?.labelFieldId === 'string'
-  && Boolean(formContext?.value.loadRelationOptions)
-));
-const remoteChoiceOptions = shallowRef<Array<{ label: string; value: string }>>([]);
-const relationLoading = shallowRef(false);
-const relationError = shallowRef<string | null>(null);
-let latestRelationRequestId = 0;
-
-const relationRequest = computed(() => {
-  if (!hasRelationOptions.value) return null;
-  return createRelationOptionRequest(
-    props.item.id,
-    relationDependencies.value,
-    state.value ?? {},
-  );
-});
-
-function discardUnavailableSelection(optionIds: ReadonlySet<string>): void {
-  if (!state.value) return;
-  const current = state.value[props.item.id];
-  if (Array.isArray(current)) {
-    const next = current.filter((value) => typeof value === 'string' && optionIds.has(value));
-    if (next.length !== current.length) state.value[props.item.id] = next;
-    return;
-  }
-  if (current !== undefined && (typeof current !== 'string' || !optionIds.has(current))) {
-    delete state.value[props.item.id];
-  }
-}
-
-async function loadRemoteOptions(): Promise<void> {
-  const request = relationRequest.value;
-  const loader = formContext?.value.loadRelationOptions;
-  latestRelationRequestId += 1;
-  const requestId = latestRelationRequestId;
-  if (!request || !loader) {
-    remoteChoiceOptions.value = [];
-    relationLoading.value = false;
-    relationError.value = null;
-    return;
-  }
-  relationLoading.value = true;
-  relationError.value = null;
-  try {
-    const options = await loader(props.item.id, request.values);
-    if (!isLatestRelationRequest(requestId, latestRelationRequestId)) return;
-    remoteChoiceOptions.value = options.map((option) => ({
-      label: option.label,
-      value: option.id,
-    }));
-    discardUnavailableSelection(new Set(options.map((option) => option.id)));
-  } catch {
-    if (!isLatestRelationRequest(requestId, latestRelationRequestId)) return;
-    remoteChoiceOptions.value = [];
-    relationError.value = '选项加载失败，请稍后重试';
-  } finally {
-    if (isLatestRelationRequest(requestId, latestRelationRequestId)) {
-      relationLoading.value = false;
-    }
-  }
-}
-
-watch(
-  [
-    () => relationRequest.value?.key,
-    () => formContext?.value.loadRelationOptions,
-  ],
-  () => { loadRemoteOptions(); },
-  { immediate: true },
-);
-
-const choiceOptions = computed(() => (
-  hasRelationOptions.value ? remoteChoiceOptions.value : props.item.choiceOptions
-));
-const resolvedError = computed(() => props.error ?? formContext?.value.errors[props.item.id]);
-
-const leafProps = computed(() => {
-  const base: Record<string, unknown> = {
-    placeholder: props.item.placeholder,
-    required: fieldRequired.value,
-    disabled: props.allowEdit,
-    'aria-label': resolvedTitle.value,
-  };
-  if (widgetName.value === 'input' || widgetName.value === 'email') {
-    base.type = resolveInputType(props.item.property);
-  }
-  if (fromAuthenticatedEmail.value) {
-    base.readonly = true;
-  }
-  if (
-    widgetName.value === 'checkbox'
-    || widgetName.value === 'radio'
-    || widgetName.value === 'selector'
-    || widgetName.value === 'cascader'
-  ) {
-    base.items = choiceOptions.value;
-  }
-  if (widgetName.value === 'selector' || widgetName.value === 'cascader') {
-    base.options = choiceOptions.value;
-  }
-  if (widgetName.value === 'selector') {
-    const prop = props.item.property as Record<string, unknown>;
-    if (prop.type === 'array' && prop.maxItems !== 1) base.multiple = true;
-  }
-  if (widgetName.value === 'checkbox') {
-    const prop = props.item.property as Record<string, unknown>;
-    base.boolean = prop.type === 'boolean' && choiceOptions.value.length === 0;
-  }
-  if (hasRelationOptions.value) base.disabled = props.allowEdit || relationLoading.value;
-  return base;
-});
-
-const storesSingletonArray = computed(() => {
-  const prop = props.item.property as Record<string, unknown>;
-  return prop.type === 'array' && prop.maxItems === 1;
-});
-
-const modelValue = computed<JsonValue | undefined>({
-  get: () => (props.allowEdit ? undefined : state.value?.[props.item.id]),
-  set: (value) => {
-    if (props.allowEdit || !state.value) return;
-    if (storesSingletonArray.value && !Array.isArray(value)) {
-      state.value[props.item.id] = value == null || value === '' ? [] : [value];
-      return;
-    }
-    state.value[props.item.id] = value;
-  },
-});
 
 /** 标题 / 描述是否处于就地编辑态。 */
 const titleEditing = ref(false);
@@ -344,52 +193,22 @@ function emitDelete(): void { emit('delete', props.item.id); }
         />
       </div>
 
-      <!-- 叶子 item：UFormField + componentMap -->
+      <!-- 叶子项自行组合基础表单项；此处只负责放置与编辑容器。 -->
       <div class="mt-3">
-        <UFormField
-          :name="item.id"
-          :label="resolvedTitle"
-          :required="fieldRequired"
-          :error="resolvedError"
-          :ui="{
-            label: 'sr-only',
-            container: 'mt-0',
-          }"
+        <component
+          :is="leafComponent"
+          v-if="leafComponent"
+          :item="item"
+          :disabled="allowEdit"
+          :error="error"
+          :aria-label="resolvedTitle"
+        />
+        <div
+          v-else
+          class="rounded-lg border border-dashed border-default px-3 py-2 text-sm text-muted"
         >
-          <component
-            :is="leafComponent"
-            v-if="leafComponent"
-            v-model="modelValue"
-            v-bind="leafProps"
-          />
-          <div
-            v-else
-            class="rounded-lg border border-dashed border-default px-3 py-2 text-sm text-muted"
-          >
-            未知控件：{{ widgetName ?? '（未配置 widget）' }}
-          </div>
-        </UFormField>
-        <p
-          v-if="relationLoading"
-          class="mt-2 text-sm text-muted"
-          role="status"
-        >
-          正在加载选项…
-        </p>
-        <p
-          v-else-if="relationError"
-          class="mt-2 text-sm text-error"
-          role="alert"
-        >
-          {{ relationError }}
-        </p>
-        <p
-          v-else-if="hasRelationOptions && choiceOptions.length === 0"
-          class="mt-2 text-sm text-muted"
-          role="status"
-        >
-          暂无可用选项
-        </p>
+          未知控件：{{ widgetName ?? '（未配置 widget）' }}
+        </div>
       </div>
     </div>
 

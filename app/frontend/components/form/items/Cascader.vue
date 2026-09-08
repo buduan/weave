@@ -3,10 +3,16 @@ import { computed, useAttrs, watch } from '#imports';
 import {
   isFormItemOption,
   normalizeFormItemOptions,
+  toFormItemOptions,
   type FormItemOption,
   type FormItemOptionInput,
   type FormItemValue,
 } from './types';
+import {
+  useFormItemBinding,
+  type FormItemProps,
+} from './useFormItemBinding';
+import { useFormItemOptions } from './useFormItemOptions';
 
 /* eslint-disable vue/valid-v-for -- each cascade level uses its option set in the key */
 
@@ -15,13 +21,10 @@ defineOptions({ inheritAttrs: false });
 type CascaderSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 type CascaderColor = 'primary' | 'secondary' | 'success' | 'info' | 'warning' | 'error' | 'neutral';
 
-interface CascaderProps {
+interface CascaderProps extends FormItemProps {
   items?: FormItemOptionInput[];
   options?: FormItemOptionInput[];
-  placeholder?: string;
   levelPlaceholders?: string[];
-  disabled?: boolean;
-  required?: boolean;
   size?: CascaderSize;
   color?: CascaderColor;
   valueKey?: string;
@@ -32,7 +35,6 @@ interface CascaderProps {
 const props = withDefaults(defineProps<CascaderProps>(), {
   items: undefined,
   options: undefined,
-  placeholder: '',
   levelPlaceholders: () => [],
   maxLevels: 3,
   size: 'md',
@@ -44,13 +46,31 @@ const model = defineModel<FormItemValue[]>({ default: () => [] });
 const emit = defineEmits<{
   completionChange: [complete: boolean];
 }>();
+const {
+  baseProps,
+  disabled,
+  modelValue,
+  placeholder,
+} = useFormItemBinding(props, model);
+const relationOptions = useFormItemOptions(() => props.item);
+const cascaderModel = computed<FormItemValue[]>({
+  get: () => (Array.isArray(modelValue.value) ? modelValue.value : []),
+  set: (value) => { modelValue.value = value; },
+});
 const attrs = useAttrs();
 const cascadeAttrs = computed(() => {
   const result = { ...attrs };
   delete result.id;
   return result;
 });
-const rawItems = computed(() => props.items ?? props.options ?? []);
+const rawItems = computed(() => (
+  props.items
+  ?? props.options
+  ?? (relationOptions.hasRelationOptions.value
+    ? relationOptions.options.value as FormItemOptionInput[]
+    : toFormItemOptions(props.item?.choiceOptions ?? []))
+));
+const controlDisabled = computed(() => disabled.value || relationOptions.loading.value);
 
 const normalizedItems = computed(() => normalizeFormItemOptions(rawItems.value, {
   labelKey: props.labelKey,
@@ -72,13 +92,13 @@ function findOption(optionItems: FormItemOptionInput[], value: FormItemValue) {
 }
 
 const complete = computed(() => {
-  if (model.value.length === 0) return false;
+  if (cascaderModel.value.length === 0) return false;
   let currentItems = normalizedItems.value;
-  for (let level = 0; level < model.value.length; level += 1) {
-    const selected = findOption(currentItems, model.value[level]!);
+  for (let level = 0; level < cascaderModel.value.length; level += 1) {
+    const selected = findOption(currentItems, cascaderModel.value[level]!);
     if (!selected) return false;
     const children = optionChildren(selected);
-    if (level === model.value.length - 1) return children.length === 0;
+    if (level === cascaderModel.value.length - 1) return children.length === 0;
     currentItems = children;
   }
   return false;
@@ -92,7 +112,7 @@ const levels = computed(() => {
 
   for (let level = 0; level < props.maxLevels; level += 1) {
     result.push(currentItems);
-    const selected = model.value[level];
+    const selected = cascaderModel.value[level];
     if (selected === undefined) break;
     currentItems = optionChildren(findOption(currentItems, selected) ?? '');
     if (currentItems.length === 0) break;
@@ -106,35 +126,48 @@ function cascadeId(level: number): string | undefined {
 }
 
 function placeholderFor(level: number): string {
-  const placeholder = props.levelPlaceholders?.[level];
-  if (placeholder) return placeholder;
-  if (level === 0) return props.placeholder ?? '请选择';
+  const levelPlaceholder = props.levelPlaceholders?.[level];
+  if (levelPlaceholder) return levelPlaceholder;
+  if (level === 0) return placeholder.value ?? '请选择';
   return '请选择下一级';
 }
 
 function updateCascade(level: number, value: FormItemValue | undefined): void {
-  const nextPath = model.value.slice(0, level);
+  const nextPath = cascaderModel.value.slice(0, level);
   if (value !== undefined && value !== '') nextPath.push(value);
-  model.value = nextPath;
+  modelValue.value = nextPath;
 }
 </script>
 
 <template>
-  <div class="grid w-full gap-3 sm:grid-cols-3">
-    <USelect
-      v-for="(levelItems, level) in levels"
-      :id="cascadeId(level)"
-      :key="`${level}-${levelItems.length}`"
-      :model-value="model[level]"
-      v-bind="cascadeAttrs"
-      class="min-w-0"
-      :items="levelItems"
-      :placeholder="placeholderFor(level)"
-      :disabled="disabled || (level > 0 && model[level - 1] == null)"
-      :required="required"
-      :size="size"
-      :color="color"
-      @update:model-value="updateCascade(level, $event)"
-    />
-  </div>
+  <FormItemsBase v-bind="baseProps">
+    <div class="grid w-full gap-3 sm:grid-cols-3">
+      <USelect
+        v-for="(levelItems, level) in levels"
+        :id="cascadeId(level)"
+        :key="`${level}-${levelItems.length}`"
+        :model-value="cascaderModel[level]"
+        v-bind="cascadeAttrs"
+        class="min-w-0"
+        :items="levelItems"
+        :placeholder="placeholderFor(level)"
+        :disabled="controlDisabled || (level > 0 && cascaderModel[level - 1] == null)"
+        :required="baseProps.required"
+        :size="size"
+        :color="color"
+        @update:model-value="updateCascade(level, $event)"
+      />
+    </div>
+
+    <template #after>
+      <FormItemsChoiceStatus
+        :loading="relationOptions.loading.value"
+        :error="relationOptions.error.value"
+        :empty="relationOptions.hasRelationOptions.value
+          && !relationOptions.loading.value
+          && !relationOptions.error.value
+          && normalizedItems.length === 0"
+      />
+    </template>
+  </FormItemsBase>
 </template>

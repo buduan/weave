@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import {
+  useFormItemBinding,
+  type FormItemProps,
+} from './useFormItemBinding';
+
 defineOptions({ inheritAttrs: false });
 
 type TextareaSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
-interface TextareaProps {
-  placeholder?: string;
-  disabled?: boolean;
-  required?: boolean;
+interface TextareaProps extends FormItemProps {
   size?: TextareaSize;
   rows?: number;
   maxLength?: number;
@@ -15,19 +17,27 @@ interface TextareaProps {
 
 const props = defineProps<TextareaProps>();
 const model = defineModel<string>({ default: '' });
+const {
+  baseProps,
+  disabled,
+  modelValue,
+  placeholder,
+} = useFormItemBinding(props, model);
 </script>
 
 <template>
-  <UTextarea
-    v-model="model"
-    v-bind="$attrs"
-    class="w-full"
-    :placeholder="placeholder"
-    :disabled="disabled"
-    :required="required"
-    :rows="rows"
-    :autoresize="autoresize"
-    :maxlength="maxLength"
-    :size="size"
-  />
+  <FormItemsBase v-bind="baseProps">
+    <UTextarea
+      v-model="modelValue"
+      v-bind="$attrs"
+      class="w-full"
+      :placeholder="placeholder"
+      :disabled="disabled"
+      :required="baseProps.required"
+      :rows="rows"
+      :autoresize="autoresize"
+      :maxlength="maxLength"
+      :size="size"
+    />
+  </FormItemsBase>
 </template>
