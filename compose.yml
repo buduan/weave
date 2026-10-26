@@ -1,20 +1,20 @@
 name: weave
 
 services:
-  frontend:
-    build:
-      context: .
-      dockerfile: app/frontend/Dockerfile
-    restart: unless-stopped
-    environment:
-      NITRO_HOST: 0.0.0.0
-      NITRO_PORT: ${NUXT_PORT:-6771}
-      NUXT_PUBLIC_API_ORIGIN: ${API_ORIGIN:-http://localhost:6770}
-    ports:
-      - '${FRONTEND_PORT:-6771}:${NUXT_PORT:-6771}'
-    depends_on:
-      backend:
-        condition: service_started
+  # frontend:
+  #   build:
+  #     context: .
+  #     dockerfile: app/frontend/Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     NITRO_HOST: 0.0.0.0
+  #     NITRO_PORT: ${NUXT_PORT:-6771}
+  #     NUXT_PUBLIC_API_ORIGIN: ${API_ORIGIN:-http://localhost:6770}
+  #   ports:
+  #     - '${FRONTEND_PORT:-6771}:${NUXT_PORT:-6771}'
+  #   depends_on:
+  #     backend:
+  #       condition: service_started
 
   backend:
     build:
@@ -52,7 +52,7 @@ services:
       BOOTSTRAP_ADMIN_NICKNAME: ${BOOTSTRAP_ADMIN_NICKNAME:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     ports:
-      - '${BACKEND_PORT:-6770}:${PORT:-6770}'
+      - "${BACKEND_PORT:-6770}:${PORT:-6770}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,7 +69,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -77,13 +77,22 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    command: ['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"']
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"',
+      ]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep PONG']
+      test:
+        [
+          "CMD-SHELL",
+          'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep PONG',
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
