@@ -36,6 +36,7 @@ const props = withDefaults(defineProps<{
   defaultLocale?: string;
   errors?: Readonly<Record<FormItemId, string>>;
   choiceOptions?: Readonly<Record<FormItemId, readonly DatasetChoiceOption[]>>;
+  disabled?: boolean;
   loadRelationOptions?: FormRenderContext['loadRelationOptions'];
 }>(), {
   mode: 'fill',
@@ -43,6 +44,7 @@ const props = withDefaults(defineProps<{
   defaultLocale: 'zh-CN',
   errors: () => ({}),
   choiceOptions: () => ({}),
+  disabled: false,
   loadRelationOptions: undefined,
 });
 
@@ -175,6 +177,7 @@ function onSubmit(): void {
       :key="item.id"
       :item="item"
       :allow-edit="allowEdit"
+      :disabled="disabled"
       @select="selectField"
       @up="emit('up', $event)"
       @down="emit('down', $event)"

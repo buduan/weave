@@ -18,6 +18,7 @@ defineOptions({ name: 'FormField' });
 const props = defineProps<{
   item: ResolvedFormItem;
   allowEdit?: boolean;
+  disabled?: boolean;
   error?: boolean | string;
 }>();
 
@@ -199,7 +200,7 @@ function emitDelete(): void { emit('delete', props.item.id); }
           :is="leafComponent"
           v-if="leafComponent"
           :item="item"
-          :disabled="allowEdit"
+          :disabled="allowEdit || disabled"
           :error="error"
           :aria-label="resolvedTitle"
         />

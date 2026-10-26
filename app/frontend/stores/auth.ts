@@ -10,6 +10,10 @@ import { resolveSafeRedirect } from '~/utils/redirect';
 
 const refreshTokenMaxAge = 60 * 60 * 24 * 30;
 
+interface LogoutOptions {
+  redirectTo?: string | false;
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const accessTokenCookie = useCookie<string | null>('orz_access_token', {
     default: () => null,
@@ -73,6 +77,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     if (import.meta.client) {
       const route = useRoute();
+      if (route.meta.inlineAuth) return;
       const redirect = resolveSafeRedirect(route.fullPath, window.location.origin);
       navigateTo({ path: '/auth/login', query: { redirect } });
     }
@@ -117,13 +122,14 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function logout(): Promise<void> {
+  async function logout(options: LogoutOptions = {}): Promise<void> {
     const { $api } = useNuxtApp();
     try {
       await $api.post('/auth/logout', undefined);
     } finally {
       clear();
-      await navigateTo('/auth/login');
+      const redirectTo = options.redirectTo ?? '/auth/login';
+      if (redirectTo) await navigateTo(redirectTo);
     }
   }
 

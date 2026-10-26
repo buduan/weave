@@ -3,7 +3,6 @@
 import {
   computed,
   definePageMeta,
-  navigateTo,
   onMounted,
   shallowRef,
   useAsyncData,
@@ -23,15 +22,17 @@ import { resolveLocalizedText } from '@weave/utils';
 
 import { useAuthStore } from '~/stores/auth';
 import { toApiError } from '~/utils/api';
-import {
-  canSubmitPublishedForm,
-} from '~/utils/form-lifecycle';
+import { canSubmitPublishedForm } from '~/utils/form-lifecycle';
+import { formatFormLocale, orderFormLocales } from '~/utils/form-locales';
 import {
   prepareFormSubmissionAttempt,
   type FormSubmissionAttempt,
 } from '~/utils/form-submission-idempotency';
 
-definePageMeta({ layout: false });
+definePageMeta({
+  inlineAuth: true,
+  layout: false,
+});
 
 const route = useRoute();
 const { $api } = useNuxtApp();
@@ -55,10 +56,12 @@ const {
   ),
 );
 
+const locale = shallowRef('zh-CN');
 const submissionPending = shallowRef(false);
 const submitError = shallowRef<string | null>(null);
 const submitted = shallowRef<SubmitFormResult | null>(null);
 const attempt = shallowRef<FormSubmissionAttempt | null>(null);
+const switchingAccount = shallowRef(false);
 let formGeneration = 0;
 
 watch(formId, () => {
@@ -69,6 +72,14 @@ watch(formId, () => {
   attempt.value = null;
 });
 
+watch(
+  () => [form.value?.id, form.value?.version],
+  () => {
+    if (form.value) locale.value = form.value.defaultLocale;
+  },
+  { immediate: true },
+);
+
 const notFound = computed(() => {
   const current = loadError.value as unknown as {
     httpStatus?: number;
@@ -77,6 +88,60 @@ const notFound = computed(() => {
   } | null;
   return current?.httpStatus === 404 || current?.statusCode === 404 || current?.status === 404;
 });
+const pageTitle = computed(() => resolveLocalizedText(
+  form.value?.nameI18n,
+  locale.value,
+  form.value?.defaultLocale,
+) ?? '填写表单');
+const pageDescription = computed(() => resolveLocalizedText(
+  form.value?.descriptionI18n ?? undefined,
+  locale.value,
+  form.value?.defaultLocale,
+));
+const closingMessage = computed(() => resolveLocalizedText(
+  form.value?.closingMessageI18n ?? undefined,
+  locale.value,
+  form.value?.defaultLocale,
+) ?? '提交成功，感谢你的填写。');
+const localeItems = computed(() => {
+  if (!form.value) return [];
+  return orderFormLocales(
+    form.value.defaultLocale,
+    Object.keys(form.value.nameI18n),
+  ).map((value) => ({
+    label: formatFormLocale(value),
+    value,
+  }));
+});
+const requiresAuthentication = computed(() => (
+  form.value?.submissionAccess === 'authentication_required'
+));
+const needsAuthentication = computed(() => (
+  requiresAuthentication.value && !authStore.isAuthenticated
+));
+const formFillingKey = computed(() => (form.value
+  ? `${form.value.id}:${form.value.version}:${form.value.submissionContext?.expectedRevision ?? 'create'}`
+  : 'empty'
+));
+const accountName = computed(() => (
+  authStore.profile?.name
+  || authStore.profile?.nickname
+  || authStore.profile?.username
+  || authStore.profile?.email
+  || '当前账号'
+));
+const unavailableCopy = computed<[string, string]>(() => {
+  const copies = {
+    not_started: ['尚未开放', '这个表单还没有开始收集回答，请稍后再来。'],
+    closed: ['填写已结束', '这个表单目前不再接收新的回答。'],
+    inactive: ['暂不可用', '表单所使用的数据集当前不可用。'],
+    subject_row_missing: ['没有可更新的资料', '你的账号尚未关联到这个表单所需的资料行。'],
+    configuration_invalid: ['配置暂不可用', '表单当前的字段或选项配置无效，请联系管理员。'],
+  } satisfies Record<NonNullable<PublishedFormDefinition['unavailableReason']>, [string, string]>;
+  return copies[form.value?.unavailableReason ?? 'closed'];
+});
+
+useHead({ title: pageTitle });
 
 onMounted(async () => {
   if (loadError.value && !notFound.value) await refresh();
@@ -84,18 +149,10 @@ onMounted(async () => {
     try {
       await authStore.fetchProfile();
     } catch {
-      // Keep the fill page usable; backend still overwrites authenticated email.
+      // Keep the fill page usable; the backend still verifies the authenticated actor.
     }
   }
 });
-
-const pageTitle = computed(() => resolveLocalizedText(
-  form.value?.nameI18n,
-  form.value?.defaultLocale,
-  form.value?.defaultLocale,
-) ?? '填写表单');
-
-useHead({ title: pageTitle });
 
 async function loadRelationOptions(
   itemId: string,
@@ -121,7 +178,11 @@ function submissionErrorMessage(error: unknown): string {
 }
 
 async function submit(payload: Omit<SubmitFormRequest, 'formId'>): Promise<void> {
-  if (submissionPending.value || !canSubmitPublishedForm(form.value)) return;
+  if (
+    submissionPending.value
+    || needsAuthentication.value
+    || !canSubmitPublishedForm(form.value)
+  ) return;
   const generation = formGeneration;
   attempt.value = prepareFormSubmissionAttempt(
     attempt.value,
@@ -149,72 +210,66 @@ async function submit(payload: Omit<SubmitFormRequest, 'formId'>): Promise<void>
   }
 }
 
-async function login(): Promise<void> {
-  await navigateTo({
-    path: '/auth/login',
-    query: { redirect: route.fullPath },
-  });
+async function authenticated(): Promise<void> {
+  submitError.value = null;
+  await refresh();
+}
+
+async function switchAccount(): Promise<void> {
+  if (switchingAccount.value) return;
+  switchingAccount.value = true;
+  try {
+    await authStore.logout({ redirectTo: false });
+  } catch {
+    // Local credentials are cleared in all cases, so the inline flow can continue.
+  } finally {
+    switchingAccount.value = false;
+  }
+  await refresh();
 }
 </script>
 
 <template>
   <main class="min-h-dvh overflow-x-hidden bg-muted text-default">
-    <div class="h-1 bg-primary" />
-    <div class="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-12 lg:py-16">
-      <div class="mb-6 flex items-center justify-between gap-4 px-1">
-        <NuxtLink
-          to="/"
-          class="inline-flex min-h-11 items-center gap-3 rounded-lg px-2 text-sm font-bold
-            tracking-tight text-highlighted outline-none focus-visible:ring-2
-            focus-visible:ring-primary"
+    <div class="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 lg:py-14">
+      <template v-if="status === 'pending'">
+        <section
+          class="rounded-2xl border border-default/70 bg-default px-6 py-10 text-center
+            shadow-sm shadow-neutral-950/5 sm:px-10"
+          role="status"
+          aria-live="polite"
+          aria-label="正在加载表单"
         >
-          <span
-            class="grid size-8 place-items-center rounded-lg bg-primary/10 text-[0.625rem]
-              font-black tracking-[0.08em] text-primary ring-1 ring-primary/20"
-          >
-            ORZ
-          </span>
-          People Platform
-        </NuxtLink>
-        <span class="text-xs font-medium uppercase tracking-[0.14em] text-muted">
-          Secure form
-        </span>
-      </div>
-
-      <section
-        v-if="status === 'pending'"
-        class="rounded-3xl border border-default bg-default p-6 shadow-xl
-          shadow-neutral-950/5 sm:p-9"
-        role="status"
-        aria-live="polite"
-        aria-label="正在加载表单"
-      >
-        <USkeleton class="h-3 w-28" />
-        <USkeleton class="mt-6 h-10 w-3/4" />
-        <USkeleton class="mt-4 h-5 w-full max-w-xl" />
-        <div class="mt-10 space-y-6 border-t border-default pt-8">
+          <USkeleton class="mx-auto h-9 w-2/5" />
+          <USkeleton class="mx-auto mt-4 h-5 w-3/5" />
+        </section>
+        <section
+          class="mt-4 rounded-2xl border border-default/70 bg-default p-5 shadow-sm
+            shadow-neutral-950/5 sm:p-8"
+        >
           <div
             v-for="index in 3"
             :key="index"
+            class="mb-7 last:mb-0"
           >
-            <USkeleton class="h-5 w-40" />
+            <USkeleton class="h-5 w-36" />
             <USkeleton class="mt-3 h-11 w-full" />
           </div>
-        </div>
+        </section>
         <span class="sr-only">正在加载表单…</span>
-      </section>
+      </template>
 
       <section
         v-else-if="loadError"
-        class="rounded-3xl border border-default bg-default px-6 py-12 text-center
-          shadow-xl shadow-neutral-950/5 sm:px-10 sm:py-16"
+        class="rounded-2xl border border-default/70 bg-default px-6 py-12 text-center
+          shadow-sm shadow-neutral-950/5 sm:px-10 sm:py-16"
         role="alert"
       >
         <UIcon
           :name="notFound
             ? 'i-solar-document-text-bold-duotone'
             : 'i-solar-cloud-cross-bold-duotone'"
-          class="mx-auto size-12 text-muted"
+          class="mx-auto size-11 text-muted"
           aria-hidden="true"
         />
         <h1 class="mt-5 text-2xl font-bold tracking-tight text-highlighted">
@@ -237,23 +292,126 @@ async function login(): Promise<void> {
         </UButton>
       </section>
 
-      <FormFilling
-        v-else-if="form"
-        :key="`${form.id}:${form.version}:${form.submissionContext?.expectedRevision ?? 'create'}`"
-        :form="form"
-        :authenticated="authStore.isAuthenticated"
-        :authenticated-email="authStore.profile?.email ?? null"
-        :pending="submissionPending"
-        :submit-error="submitError"
-        :submitted="submitted"
-        :load-relation-options="loadRelationOptions"
-        @login="login"
-        @submit="submit"
-      />
+      <template v-else-if="form">
+        <section
+          :lang="locale"
+          class="rounded-2xl border border-default/70 bg-default px-6 py-9 text-center
+            shadow-sm shadow-neutral-950/5 sm:px-10 sm:py-11"
+        >
+          <div
+            v-if="localeItems.length > 1"
+            class="mb-6 flex justify-center"
+          >
+            <USelect
+              id="form-language"
+              v-model="locale"
+              :items="localeItems"
+              class="min-h-11 w-44 text-left"
+              aria-label="选择填写语言"
+            />
+          </div>
+          <h1 class="text-3xl font-bold tracking-[-0.035em] text-highlighted sm:text-4xl">
+            {{ pageTitle }}
+          </h1>
+          <p
+            v-if="pageDescription"
+            class="mx-auto mt-4 max-w-[58ch] whitespace-pre-line text-base leading-7 text-muted"
+          >
+            {{ pageDescription }}
+          </p>
+        </section>
 
-      <footer class="px-2 pt-8 text-center text-xs leading-5 text-muted">
-        你的回答会通过安全连接提交。请勿在共享设备上保留敏感信息。
-      </footer>
+        <section
+          v-if="form.acceptingSubmissions && requiresAuthentication"
+          class="mt-4 rounded-2xl border border-default/70 bg-default p-5 shadow-sm
+            shadow-neutral-950/5 sm:p-8"
+        >
+          <FormAuthentication
+            v-if="needsAuthentication"
+            :redirect="route.fullPath"
+            @authenticated="authenticated"
+          />
+
+          <div
+            v-else
+            class="flex min-h-11 flex-col justify-between gap-4 sm:flex-row sm:items-center"
+            role="status"
+          >
+            <p class="text-sm font-medium text-highlighted sm:text-base">
+              将会以 <span class="font-bold">{{ accountName }}</span> 的身份作答
+            </p>
+            <UButton
+              type="button"
+              color="primary"
+              variant="link"
+              class="min-h-11 self-start px-0 sm:self-auto"
+              :loading="switchingAccount"
+              :disabled="switchingAccount"
+              @click="switchAccount"
+            >
+              更换账号
+            </UButton>
+          </div>
+        </section>
+
+        <section
+          v-if="submitted"
+          class="mt-4 rounded-2xl border border-default/70 bg-default px-6 py-14 text-center
+            shadow-sm shadow-neutral-950/5 sm:px-10 sm:py-16"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            class="mx-auto grid size-12 place-items-center rounded-full bg-success/10 text-success"
+          >
+            <UIcon
+              name="i-solar-check-circle-bold-duotone"
+              class="size-7"
+              aria-hidden="true"
+            />
+          </div>
+          <h2 class="mt-5 text-2xl font-bold tracking-tight text-highlighted">
+            已收到你的回答
+          </h2>
+          <p class="mx-auto mt-3 max-w-[52ch] whitespace-pre-line leading-7 text-muted">
+            {{ closingMessage }}
+          </p>
+        </section>
+
+        <section
+          v-else-if="!form.acceptingSubmissions"
+          class="mt-4 rounded-2xl border border-default/70 bg-default p-5 shadow-sm
+            shadow-neutral-950/5 sm:p-8"
+          role="status"
+          aria-live="polite"
+        >
+          <UAlert
+            icon="i-solar-info-circle-bold-duotone"
+            color="warning"
+            variant="subtle"
+            :title="unavailableCopy[0]"
+            :description="unavailableCopy[1]"
+          />
+        </section>
+
+        <section
+          v-else
+          class="mt-4 rounded-2xl border border-default/70 bg-default p-5 shadow-sm
+            shadow-neutral-950/5 sm:p-8"
+        >
+          <FormFilling
+            :key="formFillingKey"
+            :form="form"
+            :locale="locale"
+            :authenticated-email="authStore.profile?.email ?? null"
+            :pending="submissionPending"
+            :submit-error="submitError"
+            :submit-disabled="needsAuthentication"
+            :load-relation-options="loadRelationOptions"
+            @submit="submit"
+          />
+        </section>
+      </template>
     </div>
   </main>
 </template>
